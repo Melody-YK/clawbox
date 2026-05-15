@@ -54,6 +54,7 @@ async function readWeixinAccountStatus(): Promise<{ connected: boolean; accountI
 
     for (const ent of ents) {
       if (!ent.isFile() || !ent.name.endsWith(".json")) continue;
+      if (ent.name.endsWith(".sync.json") || ent.name.endsWith(".context-tokens.json")) continue;
       const accountId = ent.name.replace(/\.json$/, "");
       accountIds.push(accountId);
       try {
