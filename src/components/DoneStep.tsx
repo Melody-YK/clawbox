@@ -578,21 +578,27 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     };
   }, []);
 
+  const refreshWechatState = useCallback(async (signal?: AbortSignal) => {
+    const r = await fetch("/setup-api/wechat/configure", { signal, cache: "no-store" });
+    if (!r.ok) return null;
+    const data = await r.json().catch(() => null as any);
+    if (!data) return null;
+
+    if (typeof data.enabled === "boolean") setWechatEnabled(data.enabled);
+    // masked token from backend is expected; do not overwrite user input with non-string
+    if (typeof data.botToken === "string" && data.botToken) setWechatToken(data.botToken);
+
+    const connected = data.connected === true;
+    setWechatDone(connected);
+    return data as { enabled?: boolean; connected?: boolean; accountIds?: string[] };
+  }, []);
+
   /* ── Fetch WeChat config on mount ── */
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/setup-api/wechat/configure", { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && !controller.signal.aborted) {
-          if (data.botToken) setWechatToken(data.botToken);
-          if (typeof data.enabled === "boolean") setWechatEnabled(data.enabled);
-          setWechatDone(data.enabled === true);
-        }
-      })
-      .catch(() => {});
+    refreshWechatState(controller.signal).catch(() => {});
     return () => controller.abort();
-  }, []);
+  }, [refreshWechatState]);
 
   useEffect(() => {
     if (providerDone && !wechatDone) {
@@ -890,13 +896,19 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ botToken: wechatToken.trim() || undefined, enabled: wechatEnabled }),
       });
+      const data = await res.json().catch(() => ({} as any));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         setWechatStatus({ type: "error", message: data.error || "Failed to save" });
         return;
       }
-      setWechatStatus({ type: "success", message: "WeChat bot settings saved!" });
-      setWechatDone(wechatEnabled);
+      const connected = data.connected === true;
+      setWechatDone(connected);
+      setWechatStatus({
+        type: "success",
+        message: connected
+          ? "WeChat bot settings saved and channel is connected."
+          : "WeChat bot settings saved. Use QR login to complete channel connection.",
+      });
     } catch (err) {
       setWechatStatus({
         type: "error",
@@ -905,6 +917,31 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     } finally {
       setWechatSaving(false);
     }
+  };
+
+  const waitWechatConnected = async (maxMs = 90_000) => {
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      try {
+        const r = await fetch("/setup-api/wechat/login-status", { cache: "no-store" });
+        if (r.ok) {
+          const s = (await r.json().catch(() => null as any)) as { connected?: boolean; accountIds?: string[] } | null;
+          if (s?.connected) {
+            setWechatDone(true);
+            await refreshWechatState().catch(() => {});
+            setWechatStatus({
+              type: "success",
+              message: `WeChat connected${s.accountIds?.[0] ? ` (account: ${s.accountIds[0]})` : ""}.`,
+            });
+            return true;
+          }
+        }
+      } catch {
+        // keep waiting
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return false;
   };
 
   const requestWechatQrCode = async () => {
@@ -923,7 +960,14 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({} as any));
+      if (res.status === 202 && data?.pending) {
+        setWechatStatus({
+          type: "success",
+          message: data.message || "Login is starting. Click Refresh QR again shortly.",
+        });
+        return;
+      }
       if (!res.ok || !data.qrUrl) {
         setWechatStatus({ type: "error", message: data.error || "Failed to refresh QR code" });
         return;
@@ -931,8 +975,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       setWechatQrUrl(data.qrUrl);
       setWechatStatus({
         type: "success",
-        message: "QR code refreshed. Please scan soon; if it expires, click refresh again.",
+        message: "QR code refreshed. Please scan now; this page will auto-detect connection status.",
       });
+
+      const connected = await waitWechatConnected();
+      if (!connected) {
+        setWechatStatus({
+          type: "error",
+          message: "QR scanned but not confirmed yet. Click Refresh QR and keep this page open until connected.",
+        });
+      }
     } catch (err) {
       setWechatStatus({
         type: "error",
