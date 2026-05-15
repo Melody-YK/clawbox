@@ -438,6 +438,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [wechatQrUrl, setWechatQrUrl] = useState<string | null>(null);
   const [wechatStatus, setWechatStatus] = useState<SectionStatusMessage | null>(null);
   const [wechatDone, setWechatDone] = useState(false);
+  const [wechatLinkCopied, setWechatLinkCopied] = useState(false);
 
   /* ── WiFi ── */
   const [wifiDone, setWifiDone] = useState(false);
@@ -973,6 +974,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         return;
       }
       setWechatQrUrl(data.qrUrl);
+      setWechatLinkCopied(false);
       setWechatStatus({
         type: "success",
         message: "QR code refreshed. Please scan now; this page will auto-detect connection status.",
@@ -992,6 +994,49 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
     } finally {
       setWechatQrLoading(false);
+    }
+  };
+
+  const openWechatMcpLink = () => {
+    if (!wechatQrUrl) {
+      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      return;
+    }
+    setWechatStatus({
+      type: "success",
+      message: "Opening WeChat login link. After authorization, return to this page and click 'Check Status'.",
+    });
+    window.location.href = wechatQrUrl;
+  };
+
+  const copyWechatMcpLink = async () => {
+    if (!wechatQrUrl) {
+      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(wechatQrUrl);
+      setWechatLinkCopied(true);
+      setWechatStatus({
+        type: "success",
+        message: "Link copied. Open WeChat and paste the link in any chat, then tap it to authorize.",
+      });
+    } catch {
+      setWechatStatus({
+        type: "error",
+        message: "Copy failed. Please use 'Open in WeChat' or open QR link directly.",
+      });
+    }
+  };
+
+  const verifyWechatNow = async () => {
+    setWechatStatus({ type: "success", message: "Checking WeChat connection status..." });
+    const ok = await waitWechatConnected(12_000);
+    if (!ok) {
+      setWechatStatus({
+        type: "error",
+        message: "Not connected yet. Complete authorization in WeChat, then click Check Status again.",
+      });
     }
   };
 
@@ -1893,10 +1938,38 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     <QRCodeSVG value={wechatQrUrl} size={170} level="M" />
                   </div>
                 </div>
-                <p className="text-[11px] text-[var(--text-muted)] break-all">
-                  If scanning fails in this webview, open this link directly:
-                  <a href={wechatQrUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-[#00e5cc] underline">Open QR link</a>
-                </p>
+                <div className="space-y-2">
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    MCP one-screen mode (experimental): use the same phone to open the WeChat auth link directly, then return here to verify.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openWechatMcpLink}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-[#00e5cc]/20 text-[#00e5cc] hover:bg-[#00e5cc]/30"
+                    >
+                      Open in WeChat (MCP)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyWechatMcpLink}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600"
+                    >
+                      {wechatLinkCopied ? "Copied" : "Copy link"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={verifyWechatNow}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-[var(--coral-bright)]/20 text-[var(--coral-bright)] hover:bg-[var(--coral-bright)]/30"
+                    >
+                      Check status
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)] break-all">
+                    Fallback: if webview jumping fails, open this link manually:
+                    <a href={wechatQrUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-[#00e5cc] underline">Open QR link</a>
+                  </p>
+                </div>
               </div>
             )}
           </div>
