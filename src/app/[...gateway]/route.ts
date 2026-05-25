@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getAll } from "@/lib/config-store";
 import { proxyToGateway } from "@/lib/gateway-proxy";
 import { redirectToSetup } from "@/lib/redirect";
@@ -10,8 +10,8 @@ async function handleGatewayRequest(
   request: NextRequest,
   context: { params: Promise<{ gateway?: string[] }> },
 ) {
-  const config = await getAll().catch(() => ({}));
-  if (!(config as any).setup_complete) {
+  const config = (await getAll().catch(() => ({}))) as { setup_complete?: boolean };
+  if (!config.setup_complete) {
     return redirectToSetup(request);
   }
 

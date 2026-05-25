@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import type { StepStatus, UpdateState } from "@/lib/updater";
 import StatusMessage from "./StatusMessage";
@@ -582,7 +583,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const refreshWechatState = useCallback(async (signal?: AbortSignal) => {
     const r = await fetch("/setup-api/wechat/configure", { signal, cache: "no-store" });
     if (!r.ok) return null;
-    const data = await r.json().catch(() => null as any);
+    const data = (await r.json().catch(() => null)) as {
+      enabled?: boolean;
+      botToken?: string;
+      connected?: boolean;
+      accountIds?: string[];
+    } | null;
     if (!data) return null;
 
     if (typeof data.enabled === "boolean") setWechatEnabled(data.enabled);
@@ -591,7 +597,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
     const connected = data.connected === true;
     setWechatDone(connected);
-    return data as { enabled?: boolean; connected?: boolean; accountIds?: string[] };
+    return data;
   }, []);
 
   /* ── Fetch WeChat config on mount ── */
@@ -897,7 +903,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ botToken: wechatToken.trim() || undefined, enabled: wechatEnabled }),
       });
-      const data = await res.json().catch(() => ({} as any));
+      const data = (await res.json().catch(() => ({}))) as { error?: string; connected?: boolean };
       if (!res.ok) {
         setWechatStatus({ type: "error", message: data.error || "Failed to save" });
         return;
@@ -926,7 +932,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       try {
         const r = await fetch("/setup-api/wechat/login-status", { cache: "no-store" });
         if (r.ok) {
-          const s = (await r.json().catch(() => null as any)) as { connected?: boolean; accountIds?: string[] } | null;
+          const s = (await r.json().catch(() => null)) as { connected?: boolean; accountIds?: string[] } | null;
           if (s?.connected) {
             setWechatDone(true);
             await refreshWechatState().catch(() => {});
@@ -961,8 +967,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-      const data = await res.json().catch(() => ({} as any));
-      if (res.status === 202 && data?.pending) {
+      const data = (await res.json().catch(() => ({}))) as {
+        pending?: boolean;
+        message?: string;
+        error?: string;
+        qrUrl?: string;
+      };
+      if (res.status === 202 && data.pending) {
         setWechatStatus({
           type: "success",
           message: data.message || "Login is starting. Click Refresh QR again shortly.",
@@ -2074,9 +2085,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             Connecting may drop this page briefly. After the device joins your router, open the device’s `.local` address first. If your client does not resolve `.local`, use the IPv4 shown on the device screen.
           </p>
           <p className="text-xs mt-2">
-            <a href="/setup/wifi" className="text-[#00e5cc] underline">
+            <Link href="/setup/wifi" className="text-[#00e5cc] underline">
               Open dedicated WiFi setup page
-            </a>
+            </Link>
           </p>
           {wifiStatus && <StatusMessage type={wifiStatus.type} message={wifiStatus.message} />}
           <button
