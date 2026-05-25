@@ -32,7 +32,8 @@ export async function POST(request: Request) {
       wechat_last_error: undefined,
     }).catch(() => {});
 
-    return NextResponse.json({ success: true, message: "WeChat config updated" });
+    const latest = await getWechatConfig();
+    return NextResponse.json({ success: true, message: "WeChat config updated", ...latest });
   } catch (err) {
     const message =
       err instanceof Error

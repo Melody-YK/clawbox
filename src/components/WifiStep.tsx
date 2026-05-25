@@ -11,15 +11,10 @@ interface WifiNetwork {
   freq: string;
 }
 
-interface WifiStepProps {
-  onNext: () => void;
-  /** When true, do not POST /setup-api/setup/complete (e.g. dashboard WiFi-only page). */
-  skipCompleteOnConnect?: boolean;
-}
-
 interface ScanResponse {
   scanning?: boolean;
   networks?: WifiNetwork[] | null;
+  error?: string | null;
 }
 
 interface ErrorResponse {
@@ -30,6 +25,17 @@ interface ConnectResponse {
   message?: string;
   mdnsHost?: string;
   nextUrlHint?: string;
+}
+
+interface WifiStatusHint {
+  type: "success" | "error";
+  message: string;
+}
+
+interface WifiStatusSnapshot {
+  hostname?: string;
+  mdnsHost?: string;
+  accessUrl?: string;
 }
 
 function isScanResponse(value: unknown): value is ScanResponse {
@@ -51,7 +57,11 @@ function getConnectResponse(value: unknown): ConnectResponse | null {
   return value as ConnectResponse;
 }
 
-export default function WifiStep({ onNext, skipCompleteOnConnect = false }: WifiStepProps) {
+export default function WifiStep({
+  externalStatus = null,
+}: {
+  externalStatus?: WifiStatusHint | null;
+}) {
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -63,10 +73,35 @@ export default function WifiStep({ onNext, skipCompleteOnConnect = false }: Wifi
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [statusSnapshot, setStatusSnapshot] = useState<WifiStatusSnapshot | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const visibleStatus = status ?? externalStatus;
 
   useEffect(() => {
+    const controller = new AbortController();
+    const loadStatusSnapshot = async () => {
+      try {
+        const res = await fetch("/setup-api/wifi/status", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const data: unknown = await res.json().catch(() => null);
+        if (typeof data !== "object" || data === null) return;
+        const snapshot = data as WifiStatusSnapshot;
+        setStatusSnapshot({
+          hostname: snapshot.hostname,
+          mdnsHost: snapshot.mdnsHost,
+          accessUrl: snapshot.accessUrl,
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    void loadStatusSnapshot();
     return () => {
+      controller.abort();
       controllerRef.current?.abort();
     };
   }, []);
@@ -103,8 +138,19 @@ export default function WifiStep({ onNext, skipCompleteOnConnect = false }: Wifi
         throw new Error("Scan timed out");
       }
 
-      setNetworks(data.networks || []);
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const list = data.networks || [];
+      setNetworks(list);
       setShowNetworkList(true);
+      if (list.length === 0) {
+        setStatus({
+          type: "error",
+          message: "No networks found. Move closer to the router and try Scan Networks again.",
+        });
+      }
     } catch (err) {
       setStatus({
         type: "error",
@@ -146,15 +192,21 @@ export default function WifiStep({ onNext, skipCompleteOnConnect = false }: Wifi
         type: "success",
         message: serverMessage,
       });
-      setTimeout(() => onNext(), 3000);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setConnecting(false);
+        const mdnsHint =
+          statusSnapshot?.accessUrl ||
+          (statusSnapshot?.mdnsHost ? `http://${statusSnapshot.mdnsHost}/` : "");
+        const hostnameHint = statusSnapshot?.hostname
+          ? `路由器客户端列表里找主机名 ${statusSnapshot.hostname}`
+          : "路由器客户端列表里找 clawbox-xxxxxx 主机";
+
         setStatus({
-          type: "error",
+          type: "success",
           message:
-            "Lost connection. If WiFi switched successfully, reconnect to the same Wi‑Fi and open the device’s .local address, or use the IP shown on the screen if .local does not resolve.",
+            `连接过程中热点断开是正常现象。请把手机切到目标 WiFi 后访问 ${mdnsHint || "设备的 .local 地址"}。如果 .local 无法访问，请用设备屏幕显示的 IPv4，或在 ${hostnameHint}。`,
         });
         return;
       }
@@ -288,9 +340,12 @@ export default function WifiStep({ onNext, skipCompleteOnConnect = false }: Wifi
           </div>
         </div>
 
-        {status && (
+        {visibleStatus && (
           <div className="mt-4">
-            <StatusMessage type={status.type} message={status.message} />
+            <StatusMessage
+              type={visibleStatus.type}
+              message={visibleStatus.message}
+            />
           </div>
         )}
 

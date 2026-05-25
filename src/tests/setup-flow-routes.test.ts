@@ -56,9 +56,11 @@ beforeEach(async () => {
   setWechatConfigMock.mockReset();
   getWifiRuntimeStateMock.mockReset();
   getWifiRuntimeStateMock.mockResolvedValue({
+    mode: "unknown",
     connected: false,
     ssid: null,
     ipv4: null,
+    hotspotActive: false,
   });
   await fs.rm(DATA_DIR, { recursive: true, force: true });
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -148,9 +150,11 @@ describe("Setup complete route", () => {
 
   it("self-heals wifi_configured when runtime state is already connected", async () => {
     getWifiRuntimeStateMock.mockResolvedValue({
+      mode: "client",
       connected: true,
       ssid: "AKA-ylwz",
       ipv4: "192.168.31.55",
+      hotspotActive: false,
     });
     await writeConfig({
       wifi_configured: false,
@@ -169,5 +173,95 @@ describe("Setup complete route", () => {
     expect(body.wifi_target_ssid).toBe("AKA-ylwz");
     expect(saved.wifi_configured).toBe(true);
     expect(saved.wifi_connecting).toBe(false);
+  });
+
+  it("treats hotspot fallback as WiFi incomplete even when config still says configured", async () => {
+    getWifiRuntimeStateMock.mockResolvedValue({
+      mode: "ap",
+      connected: false,
+      ssid: null,
+      ipv4: null,
+      hotspotActive: true,
+    });
+    await writeConfig({
+      wifi_configured: true,
+      wifi_target_ssid: "AKA-ylwz",
+      ai_model_configured: true,
+    });
+
+    const res = await statusGet();
+    const body = await res.json();
+    const saved = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8"));
+
+    expect(res.status).toBe(200);
+    expect(body.wifi_configured).toBe(false);
+    expect(body.wifi_mode).toBe("ap");
+    expect(body.hotspot_active).toBe(true);
+    expect(saved.wifi_configured).toBe(true);
+  });
+
+  it("preserves explicit Ethernet-only skip state when no WiFi target exists", async () => {
+    await writeConfig({
+      wifi_configured: true,
+      ai_model_configured: true,
+    });
+
+    const res = await statusGet();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.wifi_configured).toBe(true);
+    expect(body.hotspot_active).toBe(false);
+  });
+
+  it("clears pending WiFi state immediately after the device falls back to the hotspot", async () => {
+    getWifiRuntimeStateMock.mockResolvedValue({
+      mode: "ap",
+      connected: false,
+      ssid: null,
+      ipv4: null,
+      hotspotActive: true,
+    });
+    await writeConfig({
+      wifi_configured: false,
+      wifi_connecting: true,
+      wifi_target_ssid: "AKA-ylwz",
+      ai_model_configured: true,
+    });
+
+    const res = await statusGet();
+    const body = await res.json();
+    const saved = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8"));
+
+    expect(res.status).toBe(200);
+    expect(body.wifi_connecting).toBe(false);
+    expect(body.wifi_configured).toBe(false);
+    expect(typeof body.wifi_last_error).toBe("string");
+    expect(body.wifi_last_error).toContain("setup hotspot is active again");
+    expect(saved.wifi_connecting).toBe(false);
+    expect(typeof saved.wifi_last_error).toBe("string");
+  });
+
+  it("clears stale wifi_connecting pending state when runtime never reaches connected", async () => {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await writeConfig({
+      wifi_configured: false,
+      wifi_connecting: true,
+      wifi_target_ssid: "AKA-ylwz",
+      wifi_last_attempt_at: tenMinutesAgo,
+      ai_model_configured: true,
+    });
+
+    const res = await statusGet();
+    const body = await res.json();
+    const saved = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8"));
+
+    expect(res.status).toBe(200);
+    expect(body.wifi_configured).toBe(false);
+    expect(body.wifi_connecting).toBe(false);
+    expect(typeof body.wifi_last_error).toBe("string");
+    expect(body.wifi_last_error).toContain("status is still pending");
+    expect(saved.wifi_connecting).toBe(false);
+    expect(typeof saved.wifi_last_error).toBe("string");
   });
 });

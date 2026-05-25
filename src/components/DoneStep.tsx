@@ -73,7 +73,7 @@ const MAX_HISTORY = 30;
 const RESET_STEPS = [
   "Clearing configuration...",
   "Removing credentials...",
-  "Finalizing...",
+  "Restoring setup hotspot...",
   "Restarting device...",
 ];
 
@@ -105,6 +105,7 @@ const AI_PROVIDERS = [
   { id: "openai", name: "OpenAI GPT", hasSubscription: true, placeholder: "sk-...", hint: "Get your API key from platform.openai.com", tokenUrl: "https://platform.openai.com/api-keys" },
   { id: "google", name: "Google Gemini", hasSubscription: true, placeholder: "AIza...", hint: "Get your API key from Google AI Studio.", tokenUrl: "https://aistudio.google.com/apikey" },
   { id: "openrouter", name: "OpenRouter", hasSubscription: false, placeholder: "sk-or-v1-...", hint: "Get your API key from OpenRouter.", tokenUrl: "https://openrouter.ai/keys" },
+  { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hint: "Get your API key from platform.deepseek.com", tokenUrl: "https://platform.deepseek.com/api_keys" },
 ] as const;
 
 /* ── Helper functions ── */
@@ -437,6 +438,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [wechatQrUrl, setWechatQrUrl] = useState<string | null>(null);
   const [wechatStatus, setWechatStatus] = useState<SectionStatusMessage | null>(null);
   const [wechatDone, setWechatDone] = useState(false);
+  const [wechatLinkCopied, setWechatLinkCopied] = useState(false);
 
   /* ── WiFi ── */
   const [wifiDone, setWifiDone] = useState(false);
@@ -577,21 +579,27 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     };
   }, []);
 
+  const refreshWechatState = useCallback(async (signal?: AbortSignal) => {
+    const r = await fetch("/setup-api/wechat/configure", { signal, cache: "no-store" });
+    if (!r.ok) return null;
+    const data = await r.json().catch(() => null as any);
+    if (!data) return null;
+
+    if (typeof data.enabled === "boolean") setWechatEnabled(data.enabled);
+    // masked token from backend is expected; do not overwrite user input with non-string
+    if (typeof data.botToken === "string" && data.botToken) setWechatToken(data.botToken);
+
+    const connected = data.connected === true;
+    setWechatDone(connected);
+    return data as { enabled?: boolean; connected?: boolean; accountIds?: string[] };
+  }, []);
+
   /* ── Fetch WeChat config on mount ── */
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/setup-api/wechat/configure", { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && !controller.signal.aborted) {
-          if (data.botToken) setWechatToken(data.botToken);
-          if (typeof data.enabled === "boolean") setWechatEnabled(data.enabled);
-          setWechatDone(data.enabled === true);
-        }
-      })
-      .catch(() => {});
+    refreshWechatState(controller.signal).catch(() => {});
     return () => controller.abort();
-  }, []);
+  }, [refreshWechatState]);
 
   useEffect(() => {
     if (providerDone && !wechatDone) {
@@ -889,13 +897,19 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ botToken: wechatToken.trim() || undefined, enabled: wechatEnabled }),
       });
+      const data = await res.json().catch(() => ({} as any));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         setWechatStatus({ type: "error", message: data.error || "Failed to save" });
         return;
       }
-      setWechatStatus({ type: "success", message: "WeChat bot settings saved!" });
-      setWechatDone(wechatEnabled);
+      const connected = data.connected === true;
+      setWechatDone(connected);
+      setWechatStatus({
+        type: "success",
+        message: connected
+          ? "WeChat bot settings saved and channel is connected."
+          : "WeChat bot settings saved. Use QR login to complete channel connection.",
+      });
     } catch (err) {
       setWechatStatus({
         type: "error",
@@ -904,6 +918,31 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     } finally {
       setWechatSaving(false);
     }
+  };
+
+  const waitWechatConnected = async (maxMs = 90_000) => {
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      try {
+        const r = await fetch("/setup-api/wechat/login-status", { cache: "no-store" });
+        if (r.ok) {
+          const s = (await r.json().catch(() => null as any)) as { connected?: boolean; accountIds?: string[] } | null;
+          if (s?.connected) {
+            setWechatDone(true);
+            await refreshWechatState().catch(() => {});
+            setWechatStatus({
+              type: "success",
+              message: `WeChat connected${s.accountIds?.[0] ? ` (account: ${s.accountIds[0]})` : ""}.`,
+            });
+            return true;
+          }
+        }
+      } catch {
+        // keep waiting
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return false;
   };
 
   const requestWechatQrCode = async () => {
@@ -922,16 +961,32 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({} as any));
+      if (res.status === 202 && data?.pending) {
+        setWechatStatus({
+          type: "success",
+          message: data.message || "Login is starting. Click Refresh QR again shortly.",
+        });
+        return;
+      }
       if (!res.ok || !data.qrUrl) {
         setWechatStatus({ type: "error", message: data.error || "Failed to refresh QR code" });
         return;
       }
       setWechatQrUrl(data.qrUrl);
+      setWechatLinkCopied(false);
       setWechatStatus({
         type: "success",
-        message: "QR code refreshed. Please scan soon; if it expires, click refresh again.",
+        message: "QR code refreshed. Please scan now; this page will auto-detect connection status.",
       });
+
+      const connected = await waitWechatConnected();
+      if (!connected) {
+        setWechatStatus({
+          type: "error",
+          message: "QR scanned but not confirmed yet. Click Refresh QR and keep this page open until connected.",
+        });
+      }
     } catch (err) {
       setWechatStatus({
         type: "error",
@@ -939,6 +994,49 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
     } finally {
       setWechatQrLoading(false);
+    }
+  };
+
+  const openWechatMcpLink = () => {
+    if (!wechatQrUrl) {
+      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      return;
+    }
+    setWechatStatus({
+      type: "success",
+      message: "Opening WeChat login link. After authorization, return to this page and click 'Check Status'.",
+    });
+    window.location.href = wechatQrUrl;
+  };
+
+  const copyWechatMcpLink = async () => {
+    if (!wechatQrUrl) {
+      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(wechatQrUrl);
+      setWechatLinkCopied(true);
+      setWechatStatus({
+        type: "success",
+        message: "Link copied. Open WeChat and paste the link in any chat, then tap it to authorize.",
+      });
+    } catch {
+      setWechatStatus({
+        type: "error",
+        message: "Copy failed. Please use 'Open in WeChat' or open QR link directly.",
+      });
+    }
+  };
+
+  const verifyWechatNow = async () => {
+    setWechatStatus({ type: "success", message: "Checking WeChat connection status..." });
+    const ok = await waitWechatConnected(12_000);
+    if (!ok) {
+      setWechatStatus({
+        type: "error",
+        message: "Not connected yet. Complete authorization in WeChat, then click Check Status again.",
+      });
     }
   };
 
@@ -1322,37 +1420,48 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   };
 
   const resetSetup = async () => {
+    const steps = RESET_STEPS;
     setResetting(true);
     setResetStep(0);
     setResetProgress(0);
+    setCompleteError(null);
 
     // Single timer: advance step + derive progress from step index
     const stepDuration = 800;
     let currentStep = 0;
     const stepInterval = setInterval(() => {
       currentStep++;
-      if (currentStep < RESET_STEPS.length) {
+      if (currentStep < steps.length) {
         setResetStep(currentStep);
-        setResetProgress(Math.round((currentStep / RESET_STEPS.length) * 100));
+        setResetProgress(Math.round((currentStep / steps.length) * 100));
       }
     }, stepDuration);
 
     try {
-      const res = await fetch("/setup-api/setup/reset", { method: "POST" });
+      const res = await fetch("/setup-api/setup/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "factory" }),
+      });
       clearInterval(stepInterval);
 
       if (res.ok) {
         // Show final "Restarting device..." step
-        setResetStep(RESET_STEPS.length - 1);
+        setResetStep(steps.length - 1);
         setResetProgress(100);
-        // Device is rebooting — wait then try to reload (page will come back after reboot)
+        // Give the network transition or reboot a moment before reloading.
         await new Promise((r) => setTimeout(r, 3000));
         window.location.href = "/setup";
         return;
       }
-      setCompleteError("Factory reset failed");
+      const data = await res.json().catch(() => ({}));
+      setCompleteError(
+        typeof data.error === "string"
+          ? data.error
+          : "Reset all configuration failed",
+      );
     } catch {
-      setCompleteError("Factory reset failed");
+      setCompleteError("Reset all configuration failed");
     } finally {
       clearInterval(stepInterval);
       setResetting(false);
@@ -1409,7 +1518,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             className="py-3 bg-red-500/10 text-red-400 rounded-xl text-sm font-semibold hover:bg-red-500/20 hover:scale-105 transition-all cursor-pointer flex items-center justify-center gap-2 border border-red-500/20"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            Factory Reset
+            Reset All
           </button>
       </div>
 
@@ -1538,9 +1647,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       {resetConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="card-surface rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-red-400 mb-2">Factory Reset</h3>
+            <h3 className="text-lg font-bold mb-2 text-red-400">Reset All Configuration</h3>
             <p className="text-sm text-[var(--text-secondary)] mb-4 leading-relaxed">
-              This will erase all configuration, credentials, and AI model data. The device will restart afterward. Are you sure?
+              This clears WiFi, AI, WeChat, credentials, and setup state. The device will restart into the ClawBox-Setup hotspot afterward.
             </p>
             {resetting && (
               <div className="mb-4">
@@ -1563,9 +1672,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 type="button"
                 onClick={resetSetup}
                 disabled={resetting}
-                className="flex-1 py-2.5 text-sm font-semibold text-white bg-red-500 hover:bg-red-400 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                className="flex-1 py-2.5 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-red-500 hover:bg-red-400"
               >
-                Reset
+                Reset All
               </button>
             </div>
           </div>
@@ -1840,10 +1949,38 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     <QRCodeSVG value={wechatQrUrl} size={170} level="M" />
                   </div>
                 </div>
-                <p className="text-[11px] text-[var(--text-muted)] break-all">
-                  If scanning fails in this webview, open this link directly:
-                  <a href={wechatQrUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-[#00e5cc] underline">Open QR link</a>
-                </p>
+                <div className="space-y-2">
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    MCP one-screen mode (experimental): use the same phone to open the WeChat auth link directly, then return here to verify.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openWechatMcpLink}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-[#00e5cc]/20 text-[#00e5cc] hover:bg-[#00e5cc]/30"
+                    >
+                      Open in WeChat (MCP)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyWechatMcpLink}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600"
+                    >
+                      {wechatLinkCopied ? "Copied" : "Copy link"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={verifyWechatNow}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-semibold bg-[var(--coral-bright)]/20 text-[var(--coral-bright)] hover:bg-[var(--coral-bright)]/30"
+                    >
+                      Check status
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)] break-all">
+                    Fallback: if webview jumping fails, open this link manually:
+                    <a href={wechatQrUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-[#00e5cc] underline">Open QR link</a>
+                  </p>
+                </div>
               </div>
             )}
           </div>

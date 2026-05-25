@@ -111,6 +111,8 @@ export async function POST(request: Request) {
 
     const useFormEncoding = provider !== "anthropic";
     let tokenRes: Response;
+    const tokenController = new AbortController();
+    const tokenTimeout = setTimeout(() => tokenController.abort(), 30_000);
     try {
       tokenRes = await fetch(config.tokenEndpoint, {
         method: "POST",
@@ -120,13 +122,15 @@ export async function POST(request: Request) {
             : "application/json",
         },
         body: useFormEncoding ? new URLSearchParams(exchangeBody).toString() : JSON.stringify(exchangeBody),
-        signal: AbortSignal.timeout(30_000),
+        signal: tokenController.signal,
       });
     } catch (fetchErr) {
-      if (fetchErr instanceof DOMException && fetchErr.name === "TimeoutError") {
+      if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
         return NextResponse.json({ error: "Token exchange timed out" }, { status: 504 });
       }
       throw fetchErr;
+    } finally {
+      clearTimeout(tokenTimeout);
     }
 
     if (!tokenRes.ok) {

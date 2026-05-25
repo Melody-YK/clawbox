@@ -31,6 +31,10 @@ run_update_step() {
       chpasswd < "$INPUT_FILE"
       rm -f "$INPUT_FILE"
       ;;
+    reboot)
+      echo "[install] reboot: reboot device"
+      systemctl reboot
+      ;;
     rebuild_reboot)
       echo "[install] rebuild_reboot: rebuild Next.js app and reboot"
       cd /home/clawbox/clawbox
@@ -126,7 +130,20 @@ step_configure_nm() {
   # 确保NetworkManager正在运行
   systemctl enable NetworkManager
   systemctl start NetworkManager || true
-  
+  mkdir -p /etc/NetworkManager/conf.d
+  cat >/etc/NetworkManager/conf.d/10-clawbox-managed.conf <<EOF
+[main]
+plugins=ifupdown,keyfile
+
+[ifupdown]
+managed=true
+EOF
+  rfkill unblock wifi 2>/dev/null || true
+  nmcli radio wifi on 2>/dev/null || true
+  nmcli device set "$WIFI_IFACE" managed yes 2>/dev/null || true
+  ip link set "$WIFI_IFACE" up 2>/dev/null || true
+  systemctl restart NetworkManager || true
+
   echo "  NetworkManager configured"
 }
 

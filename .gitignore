@@ -28,7 +28,6 @@ next-env.d.ts
 
 # OS files
 .DS_Store
-._*
 Thumbs.db
 
 # Update

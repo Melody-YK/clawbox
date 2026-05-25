@@ -15,6 +15,7 @@ const ORG_PATH = path.join(DATA_DIR, "oauth-org.json");
 
 let startPost: RoutePost;
 let exchangePost: RoutePost;
+let fileSymlinkSupported = true;
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost/test", {
@@ -27,6 +28,27 @@ function jsonRequest(body: unknown): Request {
 async function resetDataDir(): Promise<void> {
   await fs.rm(DATA_DIR, { recursive: true, force: true });
   await fs.mkdir(DATA_DIR, { recursive: true });
+}
+
+async function detectFileSymlinkSupport(): Promise<boolean> {
+  const target = path.join(DATA_DIR, "symlink-probe-target.txt");
+  const link = path.join(DATA_DIR, "symlink-probe-link.txt");
+
+  try {
+    await fs.writeFile(target, "probe", "utf-8");
+    await fs.symlink(target, link, "file");
+    const stat = await fs.lstat(link);
+    return stat.isSymbolicLink();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES" || code === "ENOTSUP") {
+      return false;
+    }
+    throw error;
+  } finally {
+    await fs.rm(link, { force: true }).catch(() => {});
+    await fs.rm(target, { force: true }).catch(() => {});
+  }
 }
 
 async function writeState(overrides?: Partial<{
@@ -49,6 +71,7 @@ async function writeState(overrides?: Partial<{
 beforeAll(async () => {
   process.env.CLAWBOX_ROOT = TEST_ROOT;
   await resetDataDir();
+  fileSymlinkSupported = await detectFileSymlinkSupport();
   vi.resetModules();
   ({ POST: startPost } = await import("@/app/setup-api/ai-models/oauth/start/route"));
   ({ POST: exchangePost } = await import("@/app/setup-api/ai-models/oauth/exchange/route"));
@@ -125,7 +148,16 @@ describe("OAuth start route", () => {
   it("replaces a symlinked state file before writing a new state", async () => {
     const symlinkTarget = path.join(DATA_DIR, "state-target.json");
     await fs.writeFile(symlinkTarget, "stale", "utf-8");
-    await fs.symlink(symlinkTarget, STATE_PATH);
+
+    try {
+      await fs.symlink(symlinkTarget, STATE_PATH, "file");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!fileSymlinkSupported && (code === "EPERM" || code === "EACCES" || code === "ENOTSUP")) {
+        return;
+      }
+      throw error;
+    }
 
     const res = await startPost(jsonRequest({ provider: "anthropic" }));
     const body = await res.json();

@@ -44,6 +44,10 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     defaultModel: "openrouter/anthropic/claude-sonnet-4.5",
     profileKey: "openrouter:default",
   },
+  deepseek: {
+    defaultModel: "deepseek/deepseek-v4-flash",
+    profileKey: "deepseek:default",
+  },
 };
 
 const PROFILE_KEY_RE = /^[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+)*$/;

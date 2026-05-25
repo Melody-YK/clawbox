@@ -6,18 +6,16 @@ import Image from "next/image";
 import ProgressBar from "./ProgressBar";
 import WifiStep from "./WifiStep";
 import DoneStep from "./DoneStep";
+import { resolveSetupFlowState } from "@/lib/setup-flow";
 
 function applyStatusData(
   data: Record<string, unknown>,
   setSetupComplete: (v: boolean) => void,
   setCurrentStep: (v: number) => void
 ) {
-  if (data.setup_complete) {
-    setSetupComplete(true);
-    setCurrentStep(2);
-  } else if (data.wifi_configured) {
-    setCurrentStep(2);
-  }
+  const nextState = resolveSetupFlowState(data);
+  setSetupComplete(nextState.setupComplete);
+  setCurrentStep(nextState.currentStep);
 }
 
 export default function SetupWizard() {
@@ -25,6 +23,10 @@ export default function SetupWizard() {
   const [setupComplete, setSetupComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [wifiStatusHint, setWifiStatusHint] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
@@ -44,6 +46,32 @@ export default function SetupWizard() {
         const data = await r.json();
         if (cancelled) return;
         applyStatusData(data, setSetupComplete, setCurrentStep);
+        if (typeof data?.wifi_last_error === "string" && data.wifi_last_error.trim()) {
+          setWifiStatusHint({
+            type: "error",
+            message: data.wifi_last_error,
+          });
+        } else if (data?.wifi_connecting) {
+          const targetSsid =
+            typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
+              ? data.wifi_target_ssid
+              : "the selected WiFi";
+          setWifiStatusHint({
+            type: "success",
+            message: `Connecting to ${targetSsid} and waiting for a DHCP address. If the connection fails, reconnect to the setup hotspot and try again.`,
+          });
+        } else if (data?.wifi_configured && data?.wifi_mode === "client") {
+          const connectedSsid =
+            typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
+              ? data.wifi_target_ssid
+              : "your WiFi";
+          setWifiStatusHint({
+            type: "success",
+            message: `Connected to ${connectedSsid}. You can continue setup on this network.`,
+          });
+        } else {
+          setWifiStatusHint(null);
+        }
         setSetupError(null);
         if (data?.wifi_connecting) {
           timer = setTimeout(poll, 2000);
@@ -119,9 +147,7 @@ export default function SetupWizard() {
       <main
         className="flex-1 flex flex-col items-center justify-start sm:justify-center px-4 pt-2 pb-4 sm:p-6"
       >
-        {currentStep === 1 && (
-          <WifiStep onNext={() => setCurrentStep(2)} />
-        )}
+        {currentStep === 1 && <WifiStep externalStatus={wifiStatusHint} />}
         {currentStep === 2 && <DoneStep setupComplete={setupComplete} />}
       </main>
 
