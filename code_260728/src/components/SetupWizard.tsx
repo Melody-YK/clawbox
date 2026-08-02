@@ -9,6 +9,7 @@ import DoneStep from "./DoneStep";
 import LanguageSelector from "./LanguageSelector";
 import { resolveSetupFlowState } from "@/lib/setup-flow";
 import { t, tf } from "@/lib/i18n";
+import { useI18n } from "./I18nProvider";
 
 function applyStatusData(
   data: Record<string, unknown>,
@@ -21,6 +22,8 @@ function applyStatusData(
 }
 
 export default function SetupWizard() {
+  const { locale } = useI18n();
+  void locale;
   const [currentStep, setCurrentStep] = useState(1);
   const [setupComplete, setSetupComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true);

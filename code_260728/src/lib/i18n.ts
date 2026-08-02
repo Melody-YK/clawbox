@@ -322,3 +322,67 @@ export function t(key: string): string {
 export function tf(key: string, values: Record<string, string>): string {
   return t(key).replace(/\{(\w+)\}/g, (_, name: string) => values[name] ?? `{${name}}`);
 }
+
+// The setup UI uses a small reactive surface for the two supported dashboard
+// locales. Keep the legacy key-based helpers above for the WiFi wizard while
+// exposing typed helpers for components that must re-render without a reload.
+export const LOCALES = ["en", "zh-CN"] as const;
+export type Locale = (typeof LOCALES)[number];
+export const DEFAULT_LOCALE: Locale = "en";
+export const LOCALE_STORAGE_KEY = "locale";
+export type MessageKey = string;
+export type MessageValues = Record<string, string | number>;
+
+const ZH_CN_MESSAGES: Record<string, string> = {
+  "Change language": "\u5207\u6362\u8bed\u8a00",
+  "Keep credentials private:": "\u8bf7\u59a5\u5584\u4fdd\u7ba1\u51ed\u636e\uff1a",
+  "Connected to {ssid}. You can continue setup on this network.":
+    "\u5df2\u8fde\u63a5\u5230 {ssid}\u3002\u73b0\u5728\u53ef\u4ee5\u5728\u6b64\u7f51\u7edc\u4e2d\u7ee7\u7eed\u8bbe\u7f6e\u3002",
+};
+
+export function isLocale(value: unknown): value is Locale {
+  return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
+}
+
+export function resolveLocale(
+  storedLocale: unknown,
+  browserLanguages: readonly string[] = [],
+): Locale {
+  if (isLocale(storedLocale)) return storedLocale;
+  return browserLanguages.some((language) => language.toLowerCase().startsWith("zh"))
+    ? "zh-CN"
+    : DEFAULT_LOCALE;
+}
+
+function interpolateMessage(message: string, values: MessageValues = {}): string {
+  return message.replace(/\{(\w+)\}/g, (placeholder, name: string) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : placeholder,
+  );
+}
+
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  values?: MessageValues,
+): string {
+  const message = locale === "zh-CN" ? ZH_CN_MESSAGES[key] || key : key;
+  return interpolateMessage(message, values);
+}
+
+export function translateRuntime(locale: Locale, message: string): string {
+  if (locale !== "zh-CN") return message;
+  const direct = ZH_CN_MESSAGES[message];
+  if (direct) return direct;
+
+  const telegram = message.match(/^Telegram is online as (@[^.]+)\.$/);
+  if (telegram) return `Telegram \u5df2\u5728\u7ebf\uff0c\u673a\u5668\u4eba\u4e3a ${telegram[1]}\u3002`;
+  const feishu = message.match(/^(\d+) Feishu pairing requests? waiting for approval\.$/);
+  if (feishu) return `${feishu[1]} \u4e2a\u98de\u4e66\u914d\u5bf9\u8bf7\u6c42\u7b49\u5f85\u6279\u51c6\u3002`;
+  if (message === "WhatsApp is linked but currently offline.") {
+    return "WhatsApp \u5df2\u5173\u8054\uff0c\u4f46\u5f53\u524d\u79bb\u7ebf\u3002";
+  }
+  if (message === "LINE received a verified inbound webhook; the channel is active.") {
+    return "LINE \u5df2\u6536\u5230\u7ecf\u8fc7\u9a8c\u8bc1\u7684\u5165\u7ad9 Webhook\uff0c\u901a\u9053\u5df2\u6fc0\u6d3b\u3002";
+  }
+  return message;
+}

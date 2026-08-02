@@ -4,7 +4,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { StepStatus, UpdateState } from "@/lib/updater";
 import StatusMessage from "./StatusMessage";
+import CredentialGuide from "./CredentialGuide";
 import { getLocale, t } from "@/lib/i18n";
+import { useI18n } from "./I18nProvider";
 
 import { parseAuthInput, tryCloseOAuthWindow } from "@/lib/oauth-utils";
 
@@ -117,22 +119,22 @@ const CHAT_CHANNEL_META: { id: ChatChannelId; tag: string }[] = [
 
 const CHANNEL_COPY = {
   en: {
-    title: "Chat Channels", empty: "Select one or more chat channels", optional: "Chat channels are optional. You can enable multiple channels.", appId: "App ID", qrCode: "QR code",
+    title: "Chat Channels", empty: "Select one or more chat channels", optional: "Chat channels are optional. You can enable multiple channels.", appId: "App ID", qrCode: "QR code", feishuDomain: "Feishu", larkDomain: "Lark",
     saved: "configuration saved. The gateway is reloading.", saveFailed: "Save failed", qrFeishu: "Save to let the official Feishu plugin start QR code connection.", qrWhatsapp: "Save the enabled state, then complete QR pairing through the official WhatsApp plugin.",
     names: { wechat: "WeChat", feishu: "Feishu", qqbot: "QQ Bot", telegram: "Telegram", whatsapp: "WhatsApp", line: "LINE" },
-    descriptions: { wechat: "Sign in to a Tencent iLink bot with a QR code; direct messages only (external plugin).", feishu: "Use a Feishu/Lark bot over WebSocket; supports App ID and QR code connection (official plugin).", qqbot: "QQ Bot API with direct messages, groups, and rich media (official plugin).", telegram: "Bot API through grammY; built into the core with group support.", whatsapp: "Connect through Baileys with QR code pairing (official plugin).", line: "LINE Messaging API bot (official plugin)." },
+    descriptions: { wechat: "Sign in to a Tencent iLink bot with a QR code; direct messages only (external plugin).", feishu: "Use a Feishu/Lark bot over WebSocket; choose the correct regional platform and enter the app credentials.", qqbot: "QQ Bot API with direct messages, groups, and rich media (official plugin).", telegram: "Bot API through grammY; built into the core with group support.", whatsapp: "Connect through Baileys with QR code pairing (official plugin).", line: "LINE Messaging API bot (official plugin)." },
   },
   "zh-CN": {
-    title: "聊天渠道", empty: "选择一个或多个聊天渠道", optional: "聊天渠道是可选项，可同时启用多个渠道。", appId: "App ID", qrCode: "二维码",
+    title: "聊天渠道", empty: "选择一个或多个聊天渠道", optional: "聊天渠道是可选项，可同时启用多个渠道。", appId: "App ID", qrCode: "二维码", feishuDomain: "飞书", larkDomain: "Lark",
     saved: "配置已保存，网关正在重新加载。", saveFailed: "保存失败", qrFeishu: "保存后由飞书官方插件发起二维码连接。", qrWhatsapp: "保存启用状态后，通过 WhatsApp 官方插件完成二维码配对。",
     names: { wechat: "微信", feishu: "飞书", qqbot: "QQ Bot", telegram: "Telegram", whatsapp: "WhatsApp", line: "LINE" },
-    descriptions: { wechat: "通过二维码登录腾讯 iLink 机器人；仅支持私聊（外部插件）。", feishu: "通过 WebSocket 使用 Feishu/Lark 机器人；支持 App ID 和二维码两种连接方式（官方插件）。", qqbot: "QQ Bot API；支持私聊、群聊和富媒体（官方插件）。", telegram: "通过 grammY 使用 Bot API；包含在核心中并支持群组。", whatsapp: "通过 Baileys 连接，需要二维码配对（官方插件）。", line: "使用 LINE Messaging API 机器人（官方插件）。" },
+    descriptions: { wechat: "通过二维码登录腾讯 iLink 机器人；仅支持私聊（外部插件）。", feishu: "通过 WebSocket 使用 Feishu/Lark 机器人；请选择正确的平台区域并填写应用凭据。", qqbot: "QQ Bot API；支持私聊、群聊和富媒体（官方插件）。", telegram: "通过 grammY 使用 Bot API；包含在核心中并支持群组。", whatsapp: "通过 Baileys 连接，需要二维码配对（官方插件）。", line: "使用 LINE Messaging API 机器人（官方插件）。" },
   },
   "zh-TW": {
-    title: "聊天頻道", empty: "選擇一個或多個聊天頻道", optional: "聊天頻道為選用項目，可同時啟用多個頻道。", appId: "App ID", qrCode: "QR Code",
+    title: "聊天頻道", empty: "選擇一個或多個聊天頻道", optional: "聊天頻道為選用項目，可同時啟用多個頻道。", appId: "App ID", qrCode: "QR Code", feishuDomain: "飛書", larkDomain: "Lark",
     saved: "設定已儲存，閘道正在重新載入。", saveFailed: "儲存失敗", qrFeishu: "儲存後由飛書官方外掛程式啟動 QR Code 連線。", qrWhatsapp: "儲存啟用狀態後，透過 WhatsApp 官方外掛程式完成 QR Code 配對。",
     names: { wechat: "微信", feishu: "飛書", qqbot: "QQ Bot", telegram: "Telegram", whatsapp: "WhatsApp", line: "LINE" },
-    descriptions: { wechat: "透過 QR Code 登入騰訊 iLink 機器人；僅支援私人訊息（外部外掛程式）。", feishu: "透過 WebSocket 使用 Feishu/Lark 機器人；支援 App ID 與 QR Code 兩種連線方式（官方外掛程式）。", qqbot: "QQ Bot API；支援私人訊息、群組與多媒體（官方外掛程式）。", telegram: "透過 grammY 使用 Bot API；內建於核心並支援群組。", whatsapp: "透過 Baileys 連線，需要 QR Code 配對（官方外掛程式）。", line: "使用 LINE Messaging API 機器人（官方外掛程式）。" },
+    descriptions: { wechat: "透過 QR Code 登入騰訊 iLink 機器人；僅支援私人訊息（外部外掛程式）。", feishu: "透過 WebSocket 使用 Feishu/Lark 機器人；請選擇正確的平台區域並填寫應用程式憑據。", qqbot: "QQ Bot API；支援私人訊息、群組與多媒體（官方外掛程式）。", telegram: "透過 grammY 使用 Bot API；內建於核心並支援群組。", whatsapp: "透過 Baileys 連線，需要 QR Code 配對（官方外掛程式）。", line: "使用 LINE Messaging API 機器人（官方外掛程式）。" },
   },
 } as const;
 
@@ -149,6 +151,7 @@ const CHANNEL_FIELDS: Partial<Record<ChatChannelId, { key: string; label: string
   line: [
     { key: "channelAccessToken", label: "Channel Access Token", placeholder: "LINE channel access token", secret: true },
     { key: "channelSecret", label: "Channel Secret", placeholder: "LINE channel secret", secret: true },
+    { key: "publicBaseUrl", label: "Public HTTPS Base URL", placeholder: "https://bot.example.com" },
   ],
 };
 
@@ -400,9 +403,125 @@ function UpdateProgressHeading({ phase }: { phase: UpdateState["phase"] | undefi
   return <>System Update</>;
 }
 
+function ChannelCredentialGuide({
+  channel,
+}: {
+  channel: Exclude<ChatChannelId, "wechat">;
+}) {
+  const zh = getLocale().startsWith("zh");
+  const securityLabel = zh ? "请妥善保管凭据：" : "Keep credentials private:";
+  const securityNote = zh
+    ? "不要把 Token、Secret、截图或聊天记录提交到 GitHub。"
+    : channel === "telegram"
+      ? "Never commit the Bot Token to GitHub or include it in screenshots or chat messages."
+      : channel === "feishu" || channel === "qqbot"
+        ? "Never commit the App Secret to GitHub or include it in screenshots or chat messages."
+        : "Never commit them to GitHub or include credentials, QR screenshots or chat messages.";
+
+  if (channel === "telegram") {
+    return (
+      <CredentialGuide
+        title={zh ? "如何获取完整的 Bot Token" : "How to get the complete Bot Token"}
+        securityLabel={securityLabel}
+        securityNote={securityNote}
+        steps={zh ? [
+          <>打开 Telegram 的 <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>，发送 <code>/newbot</code>。</>,
+          <>按提示设置机器人名称和用户名，然后复制 BotFather 返回的完整 Token。</>,
+          <>冒号前的数字只是 bot ID；此字段需要完整 Token，而不是只填 bot ID。打开机器人后发送 <code>/start</code> 进行配对。</>,
+        ] : [
+          <>Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a> and send <code>/newbot</code>.</>,
+          <>Use <code>/mybots</code> to find an existing bot, then copy the complete Bot Token.</>,
+          <>The digits before the colon are only the bot ID; this field needs the complete token. Open the bot and send <code>/start</code> for pairing.</>,
+        ]}
+      />
+    );
+  }
+
+  if (channel === "feishu") {
+    return (
+      <CredentialGuide
+        title={zh ? "如何创建飞书 / Lark 应用并获取凭据" : "How to create the Feishu / Lark app and credentials"}
+        securityLabel={securityLabel}
+        securityNote={securityNote}
+        steps={zh ? [
+          <>在 <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">飞书开放平台</a> 或 <a href="https://open.larksuite.com/app" target="_blank" rel="noreferrer">Lark Developer Console</a> 创建企业自建应用。</>,
+          <>启用机器人能力和 <code>im:message</code>、<code>im:chat</code>、<code>contact:user.base:readonly</code> 权限，事件订阅选择长连接/WebSocket。</>,
+          <>发布应用版本后复制 App ID 和 App Secret，再回到此页面保存连接。</>,
+        ] : [
+          <>Create an enterprise self-built app in the <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">Feishu Open Platform</a> or <a href="https://open.larksuite.com/app" target="_blank" rel="noreferrer">Lark Developer Console</a>.</>,
+          <>Enable the Bot capability, add <code>im:message</code>, <code>im:chat</code>, and <code>contact:user.base:readonly</code>, then choose long connection/WebSocket for events.</>,
+          <>Add <code>im.message.receive_v1</code>, Create and publish an app version, and copy the App ID and App Secret here.</>,
+        ]}
+      />
+    );
+  }
+
+  if (channel === "whatsapp") {
+    return (
+      <CredentialGuide
+        title={zh ? "如何关联 WhatsApp" : "How to link WhatsApp"}
+        securityLabel={securityLabel}
+        securityNote={securityNote}
+        steps={zh ? [
+          <>不需要 Bot ID、API Token、开发者应用、Webhook 或 ClawBox 账号。</>,
+          <>在手机 WhatsApp 打开“设置 → 已关联设备 → 关联设备”，扫描页面二维码。</>,
+          <>二维码只授权一个关联设备；保持手机在线，等待页面显示已关联并在线。</>,
+        ] : [
+          <>No Bot ID, API token, developer app, webhook, or ClawBox account is required.</>,
+          <>On Android open Settings → Linked devices → Link a device; on iPhone open the menu, then Linked devices → Link a device.</>,
+          <>The QR code authorizes a linked device. Keep the phone online until the page reports that WhatsApp is linked and connected.</>,
+        ]}
+      />
+    );
+  }
+
+  if (channel === "line") {
+    return (
+      <CredentialGuide
+        title={zh ? "如何创建 LINE channel 和 Webhook" : "How to create the LINE channel and webhook"}
+        securityLabel={securityLabel}
+        securityNote={securityNote}
+        steps={zh ? [
+          <>在 <a href="https://manager.line.biz/" target="_blank" rel="noreferrer">LINE Official Account Manager</a> 启用 Messaging API。</>,
+          <>在 <a href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers Console</a> 获取 Channel secret 和 Channel access token (long-lived)。</>,
+          <>填写公网 HTTPS domain、reverse proxy 或 tunnel 生成的 Webhook 地址，按 Edit → Update → Verify，然后启用 Use webhook。</>,
+          <>页面只有在收到真实入站 Webhook 后才会标记完成。</>,
+        ] : [
+          <>Create the account in <a href="https://manager.line.biz/" target="_blank" rel="noreferrer">LINE Official Account Manager</a> and enable Messaging API. Use the <a href="https://developers.line.biz/en/docs/messaging-api/getting-started/" target="_blank" rel="noreferrer">official getting-started guide</a> if you need a new account.</>,
+          <>Open <a href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers Console</a> and copy the Channel secret and Channel access token (long-lived).</>,
+          <>Use a public HTTPS domain, reverse proxy, or tunnel. Set the Webhook URL with Edit → Update → Verify, then enable Use webhook.</>,
+          <>This page is marked done only after a real inbound webhook is received.</>,
+        ]}
+      />
+    );
+  }
+
+  return (
+    <CredentialGuide
+      title={zh ? "如何获取 QQ Bot AppID 和 AppSecret" : "How to get QQ Bot AppID and AppSecret"}
+      securityLabel={securityLabel}
+      securityNote={securityNote}
+      steps={zh ? [
+        <>打开 <a href="https://q.qq.com/qqbot/openclaw/" target="_blank" rel="noreferrer">QQ Bot 开放平台</a>，扫码登录并 Create Bot。</>,
+        <>在机器人设置中复制 AppID 和 AppSecret；这是机器人凭据，不是你的个人 QQ 号码。</>,
+        <>OpenClaw 通过 WebSocket 连接，不需要 webhook URL 或 event callback；先用创建者私聊测试，无需向所有人发布。</>,
+        <>QQ 不需要单独的 ClawBox pairing approval。</>,
+      ] : [
+        <>Open <a href="https://q.qq.com/qqbot/openclaw/" target="_blank" rel="noreferrer">QQ Bot Open Platform</a>, scan to sign in, and Create Bot.</>,
+        <>Copy the AppID and AppSecret from bot settings. These are bot credentials, not your personal QQ number.</>,
+        <>OpenClaw uses WebSocket. No webhook URL or event callback is needed. Test with the owner without publishing it to everyone.</>,
+        <>Use the <a href="https://q.qq.com/qqbot/dashboard/" target="_blank" rel="noreferrer">QQ Bot dashboard</a> later to configure visibility and experience users; this is optional for the first private test.</>,
+        <>QQ does not need a separate ClawBox pairing approval.</>,
+      ]}
+    />
+  );
+}
+
 /* ── Main component ── */
 
 export default function DoneStep({ setupComplete = false }: DoneStepProps) {
+  const { locale } = useI18n();
+  void locale;
   const dashboardLocale = getLocale();
   const channelCopy = dashboardLocale === "zh-CN" ? CHANNEL_COPY["zh-CN"] : dashboardLocale === "zh-TW" ? CHANNEL_COPY["zh-TW"] : CHANNEL_COPY.en;
   /* ── System info ── */
@@ -497,7 +616,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [channelConfigs, setChannelConfigs] = useState<Record<string, Record<string, string | boolean>>>({});
   const [channelSaving, setChannelSaving] = useState<ChatChannelId | null>(null);
   const [channelStatuses, setChannelStatuses] = useState<Record<string, SectionStatusMessage>>({});
-  const [feishuMode, setFeishuMode] = useState<"app" | "qr">("app");
+  const [feishuDomain, setFeishuDomain] = useState<"feishu" | "lark">("feishu");
 
   /* ── WiFi ── */
   const [wifiDone, setWifiDone] = useState(false);
@@ -683,17 +802,28 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     setChannelSaving(channel);
     setChannelStatuses((current) => { const next = { ...current }; delete next[channel]; return next; });
     try {
-      const config: Record<string, string | boolean> = { ...(channelConfigs[channel] || {}), enabled: channelConfigs[channel]?.enabled !== false };
-      if (channel === "feishu") config.connectionMode = feishuMode;
-      const response = await fetch("/setup-api/channels", {
+      const config: Record<string, string | boolean> = {
+        ...(channelConfigs[channel] || {}),
+        enabled: channelConfigs[channel]?.enabled !== false,
+      };
+      if (channel === "feishu") {
+        config.domain = feishuDomain;
+        config.connectionMode = "websocket";
+      }
+      const response = await fetch(`/setup-api/channels/${channel}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel, config }),
+        body: JSON.stringify(config),
       });
       const data = await response.json().catch(() => ({}));
-      setChannelStatuses((current) => ({ ...current, [channel]: response.ok
-        ? { type: "success", message: `${channelCopy.names[channel]} ${channelCopy.saved}` }
-        : { type: "error", message: data.error || channelCopy.saveFailed },
+      const statusMessage = response.ok
+        ? `${channelCopy.names[channel]} ${channelCopy.saved}`
+        : data.saved === true
+          ? `${channelCopy.names[channel]} ${channelCopy.saved} ${data.error || "The channel is not online yet."}`
+          : data.error || channelCopy.saveFailed;
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: { type: response.ok ? "success" : "error", message: statusMessage },
       }));
     } catch (error) {
       setChannelStatuses((current) => ({ ...current, [channel]: { type: "error", message: `${channelCopy.saveFailed}: ${error instanceof Error ? error.message : error}` } }));
@@ -2211,8 +2341,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[var(--text-primary)]">{channelCopy.names[channel.id]}</p><p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">{channelCopy.descriptions[channel.id]}</p></div>
                 <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}><input type="checkbox" checked={enabled} onChange={(event) => updateChannelField(channelId, "enabled", event.target.checked)} disabled={!canConfigureWechat} className="sr-only peer" /><div className="w-9 h-5 bg-[var(--bg-deep)] peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--coral-bright)]" /></label>
               </div>
-              {channelId === "feishu" && <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1"><button type="button" onClick={() => setFeishuMode("app")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuMode === "app" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.appId}</button><button type="button" onClick={() => setFeishuMode("qr")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuMode === "qr" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.qrCode}</button></div>}
-              {channelId === "feishu" && feishuMode === "qr" ? <div className="rounded-lg border border-dashed border-gray-600 p-4 text-center"><p className="text-xs text-[var(--text-secondary)]">{channelCopy.qrFeishu}</p></div> : fields.map((field) => <div key={field.key}><label className={LABEL_CLASS}>{field.label}</label><input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} disabled={!canConfigureWechat} className={INPUT_CLASS} /></div>)}
+              {channelId === "feishu" && <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1"><button type="button" onClick={() => setFeishuDomain("feishu")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuDomain === "feishu" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.feishuDomain}</button><button type="button" onClick={() => setFeishuDomain("lark")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuDomain === "lark" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.larkDomain}</button></div>}
+              {fields.map((field) => <div key={field.key}><label className={LABEL_CLASS}>{field.label}</label><input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} disabled={!canConfigureWechat} className={INPUT_CLASS} /></div>)}
               {channelId === "whatsapp" && <div className="rounded-lg border border-dashed border-gray-600 p-4 text-center"><p className="text-xs text-[var(--text-secondary)]">{channelCopy.qrWhatsapp}</p></div>}
               {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
               <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("saving") : t("save")}</button>

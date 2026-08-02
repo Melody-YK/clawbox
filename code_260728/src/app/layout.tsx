@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import I18nProvider from "@/components/I18nProvider";
 
 export const metadata: Metadata = {
   title: "ClawBox Setup",
@@ -24,7 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth">
       <body className="font-body min-h-screen flex flex-col bg-stars bg-nebula relative">
-        {children}
+        <I18nProvider>{children}</I18nProvider>
       </body>
     </html>
   );

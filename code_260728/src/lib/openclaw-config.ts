@@ -4,13 +4,18 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 
 const exec = promisify(execFile);
-const OPENCLAW_HOME = process.env.OPENCLAW_HOME || "/home/clawbox/.openclaw";
-const CONFIG_PATH = path.join(OPENCLAW_HOME, "openclaw.json");
+const OPENCLAW_STATE_DIR =
+  process.env.OPENCLAW_STATE_DIR ||
+  process.env.OPENCLAW_HOME ||
+  "/home/clawbox/.openclaw";
+const CONFIG_PATH =
+  process.env.OPENCLAW_CONFIG_PATH ||
+  path.join(OPENCLAW_STATE_DIR, "openclaw.json");
 const WECHAT_CHANNEL_KEY = "openclaw-weixin";
 const LEGACY_WECHAT_CHANNEL_KEY = "wechat";
 const ILINK_BASE_URL = "https://ilinkai.weixin.qq.com";
 
-interface OpenClawConfig {
+export interface OpenClawConfig {
   [key: string]: unknown;
   channels?: {
     [name: string]: {
@@ -33,10 +38,14 @@ export async function readConfig(): Promise<OpenClawConfig> {
 }
 
 export async function writeConfig(config: OpenClawConfig): Promise<void> {
-  await fs.mkdir(OPENCLAW_HOME, { recursive: true });
+  await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
   const tmpPath = CONFIG_PATH + ".tmp";
-  await fs.writeFile(tmpPath, JSON.stringify(config, null, 2), "utf-8");
+  await fs.writeFile(tmpPath, JSON.stringify(config, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   await fs.rename(tmpPath, CONFIG_PATH);
+  await fs.chmod(CONFIG_PATH, 0o600);
 }
 
 
@@ -77,7 +86,7 @@ export async function restartGateway(): Promise<void> {
 }
 
 async function readWeixinAccountStatus(): Promise<{ connected: boolean; accountIds: string[] }> {
-  const accountsDir = path.join(OPENCLAW_HOME, WECHAT_CHANNEL_KEY, "accounts");
+  const accountsDir = path.join(OPENCLAW_STATE_DIR, WECHAT_CHANNEL_KEY, "accounts");
   try {
     const ents = await fs.readdir(accountsDir, { withFileTypes: true });
     const accountIds: string[] = [];
@@ -110,8 +119,7 @@ export async function saveWeixinAccount(
   botToken: string,
   userId: string,
 ): Promise<void> {
-  console.error("[DEBUG] saveWeixinAccount CALLED with正正正正正正正正正正正正正正正在测试weixsave", accountId); // 加这行
-  const accountsDir = path.join(OPENCLAW_HOME, WECHAT_CHANNEL_KEY, "accounts");
+  const accountsDir = path.join(OPENCLAW_STATE_DIR, WECHAT_CHANNEL_KEY, "accounts");
   await fs.mkdir(accountsDir, { recursive: true });
   // 1. 保存账号详情文件
   const accountPath = path.join(accountsDir, `${accountId}.json`);
@@ -119,7 +127,7 @@ export async function saveWeixinAccount(
   await fs.writeFile(accountPath, JSON.stringify(data, null, 2), "utf-8");
 
   // 2. 【关键】更新 accounts.json 索引
-  const stateDir = path.join(OPENCLAW_HOME, WECHAT_CHANNEL_KEY);
+  const stateDir = path.join(OPENCLAW_STATE_DIR, WECHAT_CHANNEL_KEY);
   await fs.mkdir(stateDir, { recursive: true });
   const indexPath = path.join(stateDir, "accounts.json");
 

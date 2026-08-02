@@ -73,11 +73,15 @@ export async function POST(request: Request) {
     const merged = await setChannelConfig(channel, incoming);
     await setMany({ channels_last_error: undefined }).catch(() => {}); // ⚠️ 见说明第 3 条
 
+    // Never return the merged config: it may contain App Secrets, Bot Tokens,
+    // or LINE credentials. Read the same allowlisted, redacted view used by GET.
+    const safeChannels = await getChannelsConfig();
+
     return NextResponse.json({
       success: true,
       message: `${channel} config updated, gateway restarted`,
       channel,
-      config: merged, // ⚠️ 这里含密钥，见说明第 4 条
+      config: safeChannels[channel] ?? {},
     });
   } catch (err) {
     const message =

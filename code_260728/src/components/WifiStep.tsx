@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import StatusMessage from "./StatusMessage";
 import { t, tf } from "@/lib/i18n";
+import { useI18n } from "./I18nProvider";
 
 interface WifiNetwork {
   ssid: string;
@@ -67,6 +68,8 @@ export default function WifiStep({
 }: {
   externalStatus?: WifiStatusHint | null;
 }) {
+  const { locale } = useI18n();
+  void locale;
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);

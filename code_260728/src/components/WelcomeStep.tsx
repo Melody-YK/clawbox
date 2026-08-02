@@ -1,11 +1,14 @@
 import ClawIcon from "./ClawIcon";
 import { t } from "@/lib/i18n";
+import { useI18n } from "./I18nProvider";
 
 interface WelcomeStepProps {
   onNext: () => void;
 }
 
 export default function WelcomeStep({ onNext }: WelcomeStepProps) {
+  const { locale } = useI18n();
+  void locale;
   return (
     <div className="w-full max-w-[520px]">
       <div className="card-surface rounded-2xl p-8">

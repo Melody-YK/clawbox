@@ -33,7 +33,7 @@ describe("setup flow UI behavior", () => {
 
   it("does not keep the old auto-advance timeout in WifiStep", async () => {
     const source = await fs.readFile(
-      path.join(process.cwd(), "src/components/WifiStep.tsx"),
+      path.join(process.cwd(), "components/WifiStep.tsx"),
       "utf-8",
     );
 

@@ -18,7 +18,7 @@ const CHANNEL_CONFIG_KEY: Record<ManagedChannel, string> = {
 
 // 每个渠道允许写入的字段（与前端 CHANNEL_FIELDS 一一对应）
 const FIELD_WHITELIST: Record<ManagedChannel, string[]> = {
-  feishu:   ["enabled", "appId", "appSecret", "connectionMode"],
+  feishu:   ["enabled", "appId", "appSecret", "connectionMode", "domain"],
   qqbot:    ["enabled", "appId", "clientSecret"],
   telegram: ["enabled", "botToken"],
   whatsapp: ["enabled"],
