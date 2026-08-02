@@ -69,6 +69,17 @@ interface SectionStatusMessage {
   message: string;
 }
 
+interface ChannelRuntimeStatus {
+  state?: string;
+  configured?: boolean;
+  enabled?: boolean;
+  connected?: boolean;
+  linked?: boolean;
+  running?: boolean;
+  lastError?: string | null;
+  publicWebhookUrl?: string | null;
+}
+
 /* ── Constants ── */
 
 const MAX_HISTORY = 30;
@@ -112,9 +123,31 @@ const AI_PROVIDERS = [
 ] as const;
 
 type ChatChannelId = "wechat" | "feishu" | "qqbot" | "telegram" | "whatsapp" | "line";
-const CHAT_CHANNEL_META: { id: ChatChannelId; tag: string }[] = [
-  { id: "wechat", tag: "WX" }, { id: "feishu", tag: "FS" }, { id: "qqbot", tag: "QQ" },
-  { id: "telegram", tag: "TG" }, { id: "whatsapp", tag: "WA" }, { id: "line", tag: "LN" },
+type ConfigurableChatChannelId = Exclude<ChatChannelId, "wechat">;
+
+const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string; description: string }[] = [
+  { id: "wechat", tag: "WX", name: "WeChat", description: "Sign in to a Tencent iLink bot with a QR code; direct messages only." },
+  { id: "telegram", tag: "TG", name: "Telegram", description: "Create a bot with BotFather, then paste its complete Bot Token." },
+  { id: "whatsapp", tag: "WA", name: "WhatsApp", description: "Link a WhatsApp account by scanning a QR code. No Bot Token is needed." },
+  { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Connect an enterprise self-built app over WebSocket." },
+  { id: "line", tag: "LN", name: "LINE", description: "Connect a LINE Messaging API bot through a public HTTPS webhook." },
+  { id: "qqbot", tag: "QQ", name: "QQ Bot", description: "Connect an official QQ bot with its AppID and AppSecret." },
+];
+
+const CHANNEL_STATUS_PATHS: Record<ConfigurableChatChannelId, string> = {
+  telegram: "/setup-api/channels/telegram/status",
+  whatsapp: "/setup-api/channels/whatsapp/status",
+  feishu: "/setup-api/channels/feishu/status",
+  line: "/setup-api/channels/line/status",
+  qqbot: "/setup-api/channels/qqbot/status",
+};
+
+const CONFIGURABLE_CHAT_CHANNELS: readonly ConfigurableChatChannelId[] = [
+  "telegram",
+  "whatsapp",
+  "feishu",
+  "line",
+  "qqbot",
 ];
 
 const CHANNEL_COPY = {
@@ -403,7 +436,52 @@ function UpdateProgressHeading({ phase }: { phase: UpdateState["phase"] | undefi
   return <>System Update</>;
 }
 
-function ChannelCredentialGuide({
+function isChannelOnline(channel: ChatChannelId, status: ChannelRuntimeStatus | undefined): boolean {
+  if (channel === "line") return status?.state === "active";
+  return status?.connected === true;
+}
+
+function ChannelStatusSummary({
+  channel,
+  status,
+}: {
+  channel: ChatChannelId;
+  status: ChannelRuntimeStatus | undefined;
+}) {
+  if (!status) {
+    return <p className="text-xs text-[var(--text-muted)]">{t("Checking channel status...")}</p>;
+  }
+
+  const online = isChannelOnline(channel, status);
+  const label = online
+    ? channel === "line"
+      ? t("Active: webhook verified")
+      : t("Connected")
+    : status.state === "not_linked"
+      ? t("Waiting for QR pairing")
+      : status.state === "configured" || status.state === "ready" || status.state === "running"
+        ? t("Configured: waiting for connection")
+        : status.state === "disabled"
+          ? t("Disabled")
+          : status.state === "error"
+            ? t("Needs attention")
+            : t("Not configured");
+
+  const color = online
+    ? "text-[#00e5cc]"
+    : status.state === "error"
+      ? "text-red-400"
+      : "text-amber-400";
+
+  return (
+    <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-deep)]/50 px-3 py-2.5">
+      <p className={`text-xs font-semibold ${color}`}>{label}</p>
+      {status.lastError && <p className="mt-1 break-words text-[11px] leading-relaxed text-red-300">{status.lastError}</p>}
+    </div>
+  );
+}
+
+function LegacyChannelCredentialGuide({
   channel,
 }: {
   channel: Exclude<ChatChannelId, "wechat">;
@@ -519,11 +597,80 @@ function ChannelCredentialGuide({
 
 /* ── Main component ── */
 
+function ChannelCredentialGuide({
+  channel,
+}: {
+  channel: ConfigurableChatChannelId;
+}) {
+  const securityNote = t("Never commit credentials, QR codes, screenshots, or chat logs to GitHub.");
+  const props = {
+    securityLabel: t("Keep credentials private:"),
+    securityNote,
+  };
+
+  if (channel === "telegram") {
+    return <CredentialGuide
+      title={t("How to get a Telegram Bot Token")}
+      {...props}
+      steps={[
+        <><a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>{t(" Telegram step 1")}</>,
+        <>{t("Telegram step 2")}</>,
+        <>{t("Telegram step 3")}</>,
+      ]}
+    />;
+  }
+
+  if (channel === "feishu") {
+    return <CredentialGuide
+      title={t("How to get Feishu / Lark credentials")}
+      {...props}
+      steps={[
+        <>{t("Feishu step 1")} <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">Feishu Open Platform</a> {t("or")} <a href="https://open.larksuite.com/app" target="_blank" rel="noreferrer">Lark Developer Console</a>.</>,
+        <>{t("Feishu step 2")}</>,
+        <>{t("Feishu step 3")}</>,
+      ]}
+    />;
+  }
+
+  if (channel === "whatsapp") {
+    return <CredentialGuide
+      title={t("How to link WhatsApp")}
+      {...props}
+      steps={[
+        <>{t("WhatsApp step 1")}</>,
+        <>{t("WhatsApp step 2")}</>,
+        <>{t("WhatsApp step 3")}</>,
+      ]}
+    />;
+  }
+
+  if (channel === "line") {
+    return <CredentialGuide
+      title={t("How to configure LINE and its webhook")}
+      {...props}
+      steps={[
+        <>{t("LINE step 1")} <a href="https://manager.line.biz/" target="_blank" rel="noreferrer">LINE Official Account Manager</a>.</>,
+        <>{t("LINE step 2")} <a href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers Console</a>.</>,
+        <>{t("LINE step 3")}</>,
+        <>{t("LINE step 4")}</>,
+      ]}
+    />;
+  }
+
+  return <CredentialGuide
+    title={t("How to get QQ Bot AppID and AppSecret")}
+    {...props}
+    steps={[
+      <>{t("QQ step 1")} <a href="https://q.qq.com/qqbot/openclaw/" target="_blank" rel="noreferrer">QQ Bot OpenClaw setup page</a>.</>,
+      <>{t("QQ step 2")}</>,
+      <>{t("QQ step 3")}</>,
+    ]}
+  />;
+}
+
 export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const { locale } = useI18n();
   void locale;
-  const dashboardLocale = getLocale();
-  const channelCopy = dashboardLocale === "zh-CN" ? CHANNEL_COPY["zh-CN"] : dashboardLocale === "zh-TW" ? CHANNEL_COPY["zh-TW"] : CHANNEL_COPY.en;
   /* ── System info ── */
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -611,12 +758,15 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [wechatStatus, setWechatStatus] = useState<SectionStatusMessage | null>(null);
   const [wechatDone, setWechatDone] = useState(false);
   const [wechatLinkCopied, setWechatLinkCopied] = useState(false);
-  const [channelMenuOpen, setChannelMenuOpen] = useState(false);
-  const [selectedChannels, setSelectedChannels] = useState<ChatChannelId[]>(["wechat"]);
   const [channelConfigs, setChannelConfigs] = useState<Record<string, Record<string, string | boolean>>>({});
-  const [channelSaving, setChannelSaving] = useState<ChatChannelId | null>(null);
+  const [channelSaving, setChannelSaving] = useState<ConfigurableChatChannelId | null>(null);
   const [channelStatuses, setChannelStatuses] = useState<Record<string, SectionStatusMessage>>({});
+  const [channelRuntimeStatuses, setChannelRuntimeStatuses] = useState<Partial<Record<ConfigurableChatChannelId, ChannelRuntimeStatus>>>({});
   const [feishuDomain, setFeishuDomain] = useState<"feishu" | "lark">("feishu");
+  const [whatsappMode, setWhatsappMode] = useState<"dedicated" | "personal">("dedicated");
+  const [whatsappOwnerNumber, setWhatsappOwnerNumber] = useState("");
+  const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState<string | null>(null);
+  const [whatsappQrLoading, setWhatsappQrLoading] = useState(false);
 
   /* ── WiFi ── */
   const [wifiDone, setWifiDone] = useState(false);
@@ -772,33 +922,57 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     return data as { enabled?: boolean; connected?: boolean; accountIds?: string[] };
   }, []);
 
+  const refreshChannelRuntimeStatus = useCallback(async (
+    channel: ConfigurableChatChannelId,
+    signal?: AbortSignal,
+  ) => {
+    try {
+      const response = await fetch(CHANNEL_STATUS_PATHS[channel], {
+        signal,
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => null)) as ChannelRuntimeStatus | null;
+      if (!data || signal?.aborted) return;
+      setChannelRuntimeStatuses((current) => ({ ...current, [channel]: data }));
+    } catch {
+      // Status probes are informational; saving a channel remains available.
+    }
+  }, []);
+
+  const refreshAllChannelRuntimeStatuses = useCallback(async (signal?: AbortSignal) => {
+    await Promise.all(CONFIGURABLE_CHAT_CHANNELS.map((channel) => refreshChannelRuntimeStatus(channel, signal)));
+  }, [refreshChannelRuntimeStatus]);
+
   /* ── Fetch WeChat config on mount ── */
   useEffect(() => {
     const controller = new AbortController();
     refreshWechatState(controller.signal).catch(() => {});
+    void refreshAllChannelRuntimeStatuses(controller.signal);
+    fetch("/setup-api/channels/whatsapp", { signal: controller.signal, cache: "no-store" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data: { mode?: unknown; ownerNumber?: unknown; enabled?: unknown } | null) => {
+        if (!data || controller.signal.aborted) return;
+        if (data.mode === "dedicated" || data.mode === "personal") setWhatsappMode(data.mode);
+        if (typeof data.ownerNumber === "string") setWhatsappOwnerNumber(data.ownerNumber);
+        if (typeof data.enabled === "boolean") updateChannelField("whatsapp", "enabled", data.enabled);
+      })
+      .catch(() => {});
     fetch("/setup-api/channels", { signal: controller.signal, cache: "no-store" })
       .then((response) => response.ok ? response.json() : null)
       .then((data) => {
         if (!data?.channels || controller.signal.aborted) return;
-        setChannelConfigs(data.channels);
-        const configured = Object.keys(data.channels).filter((key): key is ChatChannelId =>
-          CHAT_CHANNEL_META.some((channel) => channel.id === key),
-        );
-        if (configured.length) setSelectedChannels((current) => Array.from(new Set([...current, ...configured])));
+        setChannelConfigs((current) => ({ ...current, ...data.channels }));
+        if (data.channels.feishu?.domain === "lark") setFeishuDomain("lark");
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [refreshWechatState]);
-
-  const toggleChatChannel = (id: ChatChannelId) => {
-    setSelectedChannels((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
-  };
+  }, [refreshAllChannelRuntimeStatuses, refreshWechatState]);
 
   const updateChannelField = (channel: ChatChannelId, field: string, value: string | boolean) => {
     setChannelConfigs((current) => ({ ...current, [channel]: { ...(current[channel] || {}), [field]: value } }));
   };
 
-  const saveChatChannel = async (channel: Exclude<ChatChannelId, "wechat">) => {
+  const saveChatChannel = async (channel: ConfigurableChatChannelId) => {
     setChannelSaving(channel);
     setChannelStatuses((current) => { const next = { ...current }; delete next[channel]; return next; });
     try {
@@ -815,18 +989,154 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
-      const data = await response.json().catch(() => ({}));
+      const data = (await response.json().catch(() => ({}))) as ChannelRuntimeStatus & {
+        saved?: boolean;
+        error?: string;
+      };
       const statusMessage = response.ok
-        ? `${channelCopy.names[channel]} ${channelCopy.saved}`
+        ? t("Channel settings saved. The gateway is reloading.")
         : data.saved === true
-          ? `${channelCopy.names[channel]} ${channelCopy.saved} ${data.error || "The channel is not online yet."}`
-          : data.error || channelCopy.saveFailed;
+          ? `${t("Channel settings saved. The gateway is reloading.")} ${data.error || t("The channel is not online yet.")}`
+          : data.error || t("Unable to save channel settings.");
       setChannelStatuses((current) => ({
         ...current,
         [channel]: { type: response.ok ? "success" : "error", message: statusMessage },
       }));
+      if (typeof data.state === "string") {
+        setChannelRuntimeStatuses((current) => ({ ...current, [channel]: data }));
+      }
+      if (response.ok) {
+        window.setTimeout(() => void refreshChannelRuntimeStatus(channel), 1000);
+      }
     } catch (error) {
-      setChannelStatuses((current) => ({ ...current, [channel]: { type: "error", message: `${channelCopy.saveFailed}: ${error instanceof Error ? error.message : error}` } }));
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: {
+          type: "error",
+          message: `${t("Unable to save channel settings.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
+    } finally {
+      setChannelSaving(null);
+    }
+  };
+
+  const requestWhatsAppQr = async (force = false) => {
+    setWhatsappQrLoading(true);
+    setChannelStatuses((current) => {
+      const next = { ...current };
+      delete next.whatsapp;
+      return next;
+    });
+    try {
+      const response = await fetch("/setup-api/channels/whatsapp/qrcode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        connected?: boolean;
+        qrDataUrl?: string | null;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: { type: "error", message: data.error || t("Unable to generate a WhatsApp QR code.") },
+        }));
+        return;
+      }
+      if (data.connected) {
+        setWhatsappQrDataUrl(null);
+        await refreshChannelRuntimeStatus("whatsapp");
+        return;
+      }
+      if (!data.qrDataUrl) {
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: { type: "error", message: data.message || t("WhatsApp did not return a QR code.") },
+        }));
+        return;
+      }
+      setWhatsappQrDataUrl(data.qrDataUrl);
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: { type: "success", message: t("QR code is ready. Scan it from WhatsApp Linked devices, then check status.") },
+      }));
+    } catch (error) {
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: {
+          type: "error",
+          message: `${t("Unable to generate a WhatsApp QR code.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
+    } finally {
+      setWhatsappQrLoading(false);
+    }
+  };
+
+  const prepareWhatsApp = async () => {
+    if (!canConfigureWechat) {
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: { type: "error", message: t("Configure an AI provider before setting up chat channels.") },
+      }));
+      return;
+    }
+    const enabled = channelConfigs.whatsapp?.enabled !== false;
+    setChannelSaving("whatsapp");
+    setChannelStatuses((current) => {
+      const next = { ...current };
+      delete next.whatsapp;
+      return next;
+    });
+    try {
+      const response = await fetch("/setup-api/channels/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled,
+          mode: whatsappMode,
+          ownerNumber: whatsappOwnerNumber.trim() || undefined,
+        }),
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as ChannelRuntimeStatus & {
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: { type: "error", message: data.error || t("Unable to prepare WhatsApp.") },
+        }));
+        return;
+      }
+      if (!enabled) {
+        setWhatsappQrDataUrl(null);
+        setChannelRuntimeStatuses((current) => ({ ...current, whatsapp: data }));
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: { type: "success", message: t("WhatsApp is disabled.") },
+        }));
+        return;
+      }
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: { type: "success", message: t("WhatsApp is prepared. Generating a QR code now.") },
+      }));
+      await requestWhatsAppQr();
+    } catch (error) {
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: {
+          type: "error",
+          message: `${t("Unable to prepare WhatsApp.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
     } finally {
       setChannelSaving(null);
     }
@@ -2183,45 +2493,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         </CollapsibleSection>
 
         {/* Chat channels */}
-        <CollapsibleSection id="wechat" title={channelCopy.title} done={selectedChannels.length > 0 && (!selectedChannels.includes("wechat") || wechatDone)} open={openSection === "wechat"} onToggle={toggle}>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setChannelMenuOpen((open) => !open)}
-              className="w-full min-h-11 px-3.5 py-2.5 rounded-lg bg-[var(--bg-deep)] border border-gray-600 hover:border-[var(--coral-bright)] flex items-center gap-2 text-left transition-colors"
-              aria-haspopup="listbox"
-              aria-expanded={channelMenuOpen}
-            >
-              <span className="flex flex-1 flex-wrap gap-1.5">
-                {selectedChannels.length ? selectedChannels.map((id) => (
-                  <span key={id} className="rounded-md bg-[var(--coral-bright)]/15 px-2 py-1 text-xs font-medium text-[var(--coral-bright)]">
-                    {channelCopy.names[id]}
-                  </span>
-                )) : <span className="text-sm text-[var(--text-muted)]">{channelCopy.empty}</span>}
-              </span>
-              <svg className={`h-4 w-4 shrink-0 text-[var(--text-secondary)] transition-transform ${channelMenuOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-            </button>
-            {channelMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setChannelMenuOpen(false)} />
-                <div role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] shadow-xl">
-                  {CHAT_CHANNEL_META.map((channel) => {
-                    const selected = selectedChannels.includes(channel.id);
-                    return <button key={channel.id} type="button" role="option" aria-selected={selected} onClick={() => toggleChatChannel(channel.id)} className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${selected ? "bg-[var(--coral-bright)]/10" : "hover:bg-[var(--bg-surface)]"}`}>
-                      <span className={`mt-0.5 flex h-6 w-7 shrink-0 items-center justify-center rounded text-[10px] font-bold ${selected ? "bg-[var(--coral-bright)] text-white" : "bg-[var(--bg-deep)] text-[var(--text-muted)]"}`}>{channel.tag}</span>
-                      <span className="min-w-0 flex-1"><span className="block text-sm font-medium text-[var(--text-primary)]">{channelCopy.names[channel.id]}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--text-muted)]">{channelCopy.descriptions[channel.id]}</span></span>
-                      <span className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${selected ? "border-[var(--coral-bright)] bg-[var(--coral-bright)] text-white" : "border-gray-600"}`}>{selected && <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}</span>
-                    </button>;
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+        <CollapsibleSection id="wechat" title={t("WeChat")} done={wechatDone} open={openSection === "wechat"} onToggle={toggle}>
+          <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t("Sign in to a Tencent iLink bot with a QR code; direct messages only.")}</p>
 
-          {selectedChannels.length === 0 && <p className="text-xs text-[var(--text-muted)]">{channelCopy.optional}</p>}
-
-          {selectedChannels.includes("wechat") && <div className="space-y-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/40 p-4">
-          <div><p className="text-sm font-semibold text-[var(--text-primary)]">{channelCopy.names.wechat}</p><p className="mt-1 text-xs text-[var(--text-muted)]">{channelCopy.descriptions.wechat}</p></div>
+          <div className="space-y-4">
           {!canConfigureWechat ? (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300">
               {t("wechat_requires_ai")}
@@ -2331,24 +2606,115 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           </p>
           {wechatStatus && <StatusMessage type={wechatStatus.type} message={wechatStatus.message} />}
           <button type="button" onClick={saveWechat} disabled={wechatSaving || !canConfigureWechat} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{wechatSaving && ButtonSpinner}{wechatSaving ? t("saving") : t("save")}</button>
-          </div>}
+          </div>
 
-          {selectedChannels.filter((id) => id !== "wechat").map((channelId) => {
-            const channel = CHAT_CHANNEL_META.find((item) => item.id === channelId)!;
-            const fields = CHANNEL_FIELDS[channelId] || [];
-            const enabled = channelConfigs[channelId]?.enabled !== false;
-            return <div key={channelId} className="space-y-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/40 p-4">
-              <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[var(--text-primary)]">{channelCopy.names[channel.id]}</p><p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">{channelCopy.descriptions[channel.id]}</p></div>
-                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}><input type="checkbox" checked={enabled} onChange={(event) => updateChannelField(channelId, "enabled", event.target.checked)} disabled={!canConfigureWechat} className="sr-only peer" /><div className="w-9 h-5 bg-[var(--bg-deep)] peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--coral-bright)]" /></label>
-              </div>
-              {channelId === "feishu" && <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1"><button type="button" onClick={() => setFeishuDomain("feishu")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuDomain === "feishu" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.feishuDomain}</button><button type="button" onClick={() => setFeishuDomain("lark")} className={`rounded-md px-3 py-2 text-xs font-medium ${feishuDomain === "lark" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{channelCopy.larkDomain}</button></div>}
-              {fields.map((field) => <div key={field.key}><label className={LABEL_CLASS}>{field.label}</label><input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} disabled={!canConfigureWechat} className={INPUT_CLASS} /></div>)}
-              {channelId === "whatsapp" && <div className="rounded-lg border border-dashed border-gray-600 p-4 text-center"><p className="text-xs text-[var(--text-secondary)]">{channelCopy.qrWhatsapp}</p></div>}
-              {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
-              <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("saving") : t("save")}</button>
-            </div>;
-          })}
         </CollapsibleSection>
+
+        {CONFIGURABLE_CHAT_CHANNELS.map((channelId) => {
+          const channel = CHAT_CHANNEL_META.find((item) => item.id === channelId)!;
+          const fields = CHANNEL_FIELDS[channelId] || [];
+          const enabled = channelConfigs[channelId]?.enabled !== false;
+          const runtimeStatus = channelRuntimeStatuses[channelId];
+
+          return (
+            <CollapsibleSection
+              key={channelId}
+              id={channelId}
+              title={t(channel.name)}
+              done={isChannelOnline(channelId, runtimeStatus)}
+              open={openSection === channelId}
+              onToggle={toggle}
+            >
+              <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t(channel.description)}</p>
+
+              {!canConfigureWechat && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300">
+                  {t("Configure an AI provider before setting up chat channels.")}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">{t("Enable this channel")}</span>
+                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(event) => updateChannelField(channelId, "enabled", event.target.checked)}
+                    disabled={!canConfigureWechat}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 rounded-full bg-[var(--bg-deep)] peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] peer-checked:bg-[var(--coral-bright)] peer-checked:after:translate-x-full after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all" />
+                </label>
+              </div>
+
+              {channelId === "whatsapp" ? (
+                <>
+                  <ChannelCredentialGuide channel="whatsapp" />
+                  <div>
+                    <p className={LABEL_CLASS}>{t("WhatsApp account mode")}</p>
+                    <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
+                      <button type="button" onClick={() => setWhatsappMode("dedicated")} className={`rounded-md px-3 py-2 text-xs font-semibold ${whatsappMode === "dedicated" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Dedicated account")}</button>
+                      <button type="button" onClick={() => setWhatsappMode("personal")} className={`rounded-md px-3 py-2 text-xs font-semibold ${whatsappMode === "personal" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Personal account")}</button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use a dedicated account for a shared assistant. A personal account can be linked for private use.")}</p>
+                  </div>
+                  <div>
+                    <label htmlFor="whatsapp-owner-number" className={LABEL_CLASS}>{t("Owner phone number (optional)")}</label>
+                    <input id="whatsapp-owner-number" value={whatsappOwnerNumber} onChange={(event) => setWhatsappOwnerNumber(event.target.value)} placeholder="+8613800000000" inputMode="tel" autoComplete="tel" disabled={!canConfigureWechat} className={INPUT_CLASS} />
+                  </div>
+                  {whatsappQrDataUrl && (
+                    <div className="rounded-lg border border-gray-700 bg-[var(--bg-deep)] p-4">
+                      <img src={whatsappQrDataUrl} alt={t("WhatsApp linking QR code")} className="mx-auto aspect-square w-full max-w-[220px] rounded-md bg-white p-2" />
+                      <p className="mt-3 text-center text-xs leading-relaxed text-[var(--text-muted)]">{t("Open WhatsApp on your phone, choose Linked devices, then scan this QR code.")}</p>
+                    </div>
+                  )}
+                  <ChannelStatusSummary channel="whatsapp" status={runtimeStatus} />
+                  {channelStatuses.whatsapp && <StatusMessage type={channelStatuses.whatsapp.type} message={channelStatuses.whatsapp.message} />}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={prepareWhatsApp} disabled={!canConfigureWechat || channelSaving === "whatsapp" || whatsappQrLoading} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{(channelSaving === "whatsapp" || whatsappQrLoading) && ButtonSpinner}{channelSaving === "whatsapp" || whatsappQrLoading ? t("Preparing...") : enabled ? t("Prepare and show QR code") : t("Save disabled state")}</button>
+                    {whatsappQrDataUrl && <button type="button" onClick={() => requestWhatsAppQr(true)} disabled={whatsappQrLoading} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:opacity-50">{t("Refresh QR code")}</button>}
+                    <button type="button" onClick={() => void refreshChannelRuntimeStatus("whatsapp")} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <ChannelCredentialGuide channel={channelId} />
+                  {channelId === "feishu" && (
+                    <div>
+                      <p className={LABEL_CLASS}>{t("Platform")}</p>
+                      <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
+                        <button type="button" onClick={() => setFeishuDomain("feishu")} className={`rounded-md px-3 py-2 text-xs font-semibold ${feishuDomain === "feishu" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Feishu")}</button>
+                        <button type="button" onClick={() => setFeishuDomain("lark")} className={`rounded-md px-3 py-2 text-xs font-semibold ${feishuDomain === "lark" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Lark")}</button>
+                      </div>
+                    </div>
+                  )}
+                  {fields.map((field) => (
+                    <div key={field.key}>
+                      <label className={LABEL_CLASS}>{t(field.label)}</label>
+                      <input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} autoComplete="off" spellCheck={false} disabled={!canConfigureWechat} className={INPUT_CLASS} />
+                    </div>
+                  ))}
+                  {channelId === "line" && (
+                    runtimeStatus?.publicWebhookUrl ? (
+                      <div className="rounded-lg border border-gray-700 bg-[var(--bg-deep)] p-3">
+                        <p className="text-xs font-semibold text-[var(--text-secondary)]">{t("Webhook URL to paste into LINE")}</p>
+                        <code className="mt-2 block break-all rounded-md bg-black/20 px-2.5 py-2 text-[11px] text-[#00e5cc]">{runtimeStatus.publicWebhookUrl}</code>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300">{t("Save a public HTTPS base URL to generate the webhook URL for LINE Developers Console.")}</div>
+                    )
+                  )}
+                  <ChannelStatusSummary channel={channelId} status={runtimeStatus} />
+                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("Saving...") : channelId === "line" ? t("Save and validate") : t("Save and connect")}</button>
+                    <button type="button" onClick={() => void refreshChannelRuntimeStatus(channelId)} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
+                  </div>
+                </>
+              )}
+            </CollapsibleSection>
+          );
+        })}
 
         {/* WiFi — change network / re-provision */}
         <CollapsibleSection

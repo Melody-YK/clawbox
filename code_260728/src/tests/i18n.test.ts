@@ -25,6 +25,12 @@ describe("setup i18n", () => {
       }),
     ).toBe("已连接到 Office WiFi。现在可以在此网络中继续设置。");
     expect(translate("en", "Retry")).toBe("Retry");
+    expect(translate("zh-CN", "How to get a Telegram Bot Token")).toBe(
+      "\u5982\u4f55\u83b7\u53d6 Telegram Bot Token",
+    );
+    expect(translate("zh-CN", "Prepare and show QR code")).toBe(
+      "\u51c6\u5907\u5e76\u663e\u793a\u4e8c\u7ef4\u7801",
+    );
   });
 
   it("retranslates dynamic channel status messages", () => {
