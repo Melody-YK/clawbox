@@ -695,13 +695,21 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   /* ── Collapsible sections ── */
   const [openSection, setOpenSection] = useState<string | null>("ai");
+  const [activeChatChannel, setActiveChatChannel] = useState<ChatChannelId>("wechat");
+  const [channelPickerOpen, setChannelPickerOpen] = useState(true);
   const toggle = (id: string) => setOpenSection((prev) => (prev === id ? null : id));
 
   useEffect(() => {
     const requestedSection = new URLSearchParams(window.location.search).get("section");
     if (!requestedSection) return;
-    setOpenSection(requestedSection);
-    window.setTimeout(() => document.getElementById(`section-${requestedSection}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    const requestedChannel = CHAT_CHANNEL_META.find((channel) => channel.id === requestedSection);
+    const targetSection = requestedChannel ? "channels" : requestedSection;
+    if (requestedChannel) {
+      setActiveChatChannel(requestedChannel.id);
+      setChannelPickerOpen(false);
+    }
+    setOpenSection(targetSection);
+    window.setTimeout(() => document.getElementById(`section-${targetSection}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }, []);
 
   /* ── AI Provider ── */
@@ -790,6 +798,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const isAiSubscription = aiAuthMode === "subscription" && (selectedAiProvider?.hasSubscription ?? false);
   const useDeviceAuth = isAiSubscription && aiProvider === "openai";
   const canConfigureWechat = providerDone;
+  const chatChannelsDone = wechatDone || CONFIGURABLE_CHAT_CHANNELS.some((channel) =>
+    isChannelOnline(channel, channelRuntimeStatuses[channel]),
+  );
+  const activeChatChannelMeta = CHAT_CHANNEL_META.find((channel) => channel.id === activeChatChannel)!;
   const canFinishSetup = wifiDone && providerDone;
   const finishButtonDisabled = finishing || (!setupComplete && !canFinishSetup);
 
@@ -1144,7 +1156,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   useEffect(() => {
     if (providerDone && !wechatDone) {
-      setOpenSection((prev) => (prev === "ai" || prev === null ? "wechat" : prev));
+      setOpenSection((prev) => (prev === "ai" || prev === null ? "channels" : prev));
     }
   }, [providerDone, wechatDone]);
 
@@ -2493,10 +2505,83 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         </CollapsibleSection>
 
         {/* Chat channels */}
-        <CollapsibleSection id="wechat" title={t("WeChat")} done={wechatDone} open={openSection === "wechat"} onToggle={toggle}>
-          <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t("Sign in to a Tencent iLink bot with a QR code; direct messages only.")}</p>
+        <CollapsibleSection
+          id="channels"
+          title={t("Chat channels")}
+          done={chatChannelsDone}
+          open={openSection === "channels"}
+          onToggle={toggle}
+        >
+          <div className="overflow-hidden rounded-lg border border-gray-700 bg-[var(--bg-deep)]">
+            <button
+              type="button"
+              onClick={() => setChannelPickerOpen((open) => !open)}
+              aria-expanded={channelPickerOpen}
+              aria-controls="chat-channel-picker"
+              className="flex w-full min-w-0 items-center gap-3 px-3 py-3 text-left text-sm font-semibold text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--coral-bright)]"
+            >
+              <span className="inline-flex h-9 w-11 shrink-0 items-center justify-center rounded-md bg-[var(--coral-bright)]/20 text-xs font-bold text-[var(--coral-bright)]">
+                {activeChatChannelMeta.tag}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{t(activeChatChannelMeta.name)}</span>
+              <Chevron open={channelPickerOpen} />
+            </button>
 
-          <div className="space-y-4">
+            {channelPickerOpen && (
+              <div id="chat-channel-picker" className="border-t border-gray-700/80">
+                {CHAT_CHANNEL_META.map((channel, index) => {
+                  const selected = channel.id === activeChatChannel;
+
+                  return (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveChatChannel(channel.id);
+                        setChannelPickerOpen(false);
+                      }}
+                      aria-pressed={selected}
+                      className={`flex w-full min-w-0 items-start gap-3 px-3 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--coral-bright)] ${
+                        index > 0 ? "border-t border-gray-700/70" : ""
+                      } ${
+                        selected
+                          ? "bg-[var(--coral-bright)]/10"
+                          : "hover:bg-[var(--bg-surface)]"
+                      }`}
+                    >
+                      <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-xs font-bold ${
+                        selected
+                          ? "bg-[var(--coral-bright)] text-white"
+                          : "bg-slate-900 text-[var(--text-secondary)]"
+                      }`}>
+                        {channel.tag}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-[var(--text-primary)]">{t(channel.name)}</span>
+                        <span className="mt-1 block break-words text-xs leading-relaxed text-[var(--text-muted)]">{t(channel.description)}</span>
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className={`mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-sm font-semibold ${
+                          selected
+                            ? "border-[var(--coral-bright)] bg-[var(--coral-bright)] text-white"
+                            : "border-gray-600 text-transparent"
+                        }`}
+                      >
+                        &#10003;
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {activeChatChannel === "wechat" && (
+            <>
+              <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t("Sign in to a Tencent iLink bot with a QR code; direct messages only.")}</p>
+
+              <div className="space-y-4">
           {!canConfigureWechat ? (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300">
               {t("wechat_requires_ai")}
@@ -2608,23 +2693,17 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           <button type="button" onClick={saveWechat} disabled={wechatSaving || !canConfigureWechat} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{wechatSaving && ButtonSpinner}{wechatSaving ? t("saving") : t("save")}</button>
           </div>
 
-        </CollapsibleSection>
+            </>
+          )}
 
-        {CONFIGURABLE_CHAT_CHANNELS.map((channelId) => {
+        {CONFIGURABLE_CHAT_CHANNELS.filter((channelId) => channelId === activeChatChannel).map((channelId) => {
           const channel = CHAT_CHANNEL_META.find((item) => item.id === channelId)!;
           const fields = CHANNEL_FIELDS[channelId] || [];
           const enabled = channelConfigs[channelId]?.enabled !== false;
           const runtimeStatus = channelRuntimeStatuses[channelId];
 
           return (
-            <CollapsibleSection
-              key={channelId}
-              id={channelId}
-              title={t(channel.name)}
-              done={isChannelOnline(channelId, runtimeStatus)}
-              open={openSection === channelId}
-              onToggle={toggle}
-            >
+            <div key={channelId} className="space-y-4">
               <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t(channel.description)}</p>
 
               {!canConfigureWechat && (
@@ -2712,9 +2791,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                   </div>
                 </>
               )}
-            </CollapsibleSection>
+            </div>
           );
         })}
+        </CollapsibleSection>
 
         {/* WiFi — change network / re-provision */}
         <CollapsibleSection
