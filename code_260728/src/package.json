@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.72.0",
+    "@tencent-connect/qqbot-connector": "1.2.0",
     "next": "^14.0.0",
     "qrcode.react": "^3.1.0",
     "react": "^18.2.0",

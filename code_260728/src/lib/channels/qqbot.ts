@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
-import { readConfig, writeConfig } from "@/lib/openclaw-config";
+import { readConfig, updateConfig } from "@/lib/openclaw-config";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/clawbox/.npm-global/bin/openclaw";
@@ -162,24 +162,24 @@ export async function saveQQBotConfig(input: {
   clientSecret?: string;
   enabled: boolean;
 }): Promise<QQBotConfigView> {
-  const config = await readConfig();
-  const channels = isRecord(config.channels) ? { ...config.channels } : {};
-  const current = isRecord(channels.qqbot) ? channels.qqbot : {};
-  const next: Record<string, unknown> = {
-    ...current,
-    enabled: input.enabled,
-    dmPolicy: readString(current.dmPolicy) || "open",
-    groupPolicy: readString(current.groupPolicy) || "disabled",
-    allowFrom: Array.isArray(current.allowFrom) ? current.allowFrom : ["*"],
-    ...(input.appId !== undefined ? { appId: normalizeAppId(input.appId) } : {}),
-    ...(input.clientSecret !== undefined
-      ? { clientSecret: normalizeClientSecret(input.clientSecret) }
-      : {}),
-  };
-  if (input.clientSecret !== undefined) delete next.clientSecretFile;
-  channels.qqbot = next;
-  config.channels = channels;
-  await writeConfig(config);
+  await updateConfig((config) => {
+    const channels = isRecord(config.channels) ? { ...config.channels } : {};
+    const current = isRecord(channels.qqbot) ? channels.qqbot : {};
+    const next: Record<string, unknown> = {
+      ...current,
+      enabled: input.enabled,
+      dmPolicy: readString(current.dmPolicy) || "open",
+      groupPolicy: readString(current.groupPolicy) || "disabled",
+      allowFrom: Array.isArray(current.allowFrom) ? current.allowFrom : ["*"],
+      ...(input.appId !== undefined ? { appId: normalizeAppId(input.appId) } : {}),
+      ...(input.clientSecret !== undefined
+        ? { clientSecret: normalizeClientSecret(input.clientSecret) }
+        : {}),
+    };
+    if (input.clientSecret !== undefined) delete next.clientSecretFile;
+    channels.qqbot = next;
+    config.channels = channels;
+  });
   return getQQBotConfig();
 }
 

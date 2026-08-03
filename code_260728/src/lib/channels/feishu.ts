@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
-import { readConfig, writeConfig } from "@/lib/openclaw-config";
+import { readConfig, updateConfig } from "@/lib/openclaw-config";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/clawbox/.npm-global/bin/openclaw";
@@ -74,6 +74,23 @@ function normalizeAppSecret(value: string): string {
   return secret;
 }
 
+function normalizeOwnerOpenId(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new FeishuChannelError(
+      "invalid_credentials",
+      "The Feishu owner Open ID format is invalid.",
+    );
+  }
+  const openId = value.trim();
+  if (!/^ou_[A-Za-z0-9]{8,128}$/.test(openId)) {
+    throw new FeishuChannelError(
+      "invalid_credentials",
+      "The Feishu owner Open ID format is invalid.",
+    );
+  }
+  return openId;
+}
+
 function apiRoot(domain: FeishuDomain): string {
   return domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
 }
@@ -132,22 +149,30 @@ export async function getFeishuCredentials(): Promise<{ appId: string; appSecret
   return { appId, appSecret, domain: channel.domain === "lark" ? "lark" : "feishu" };
 }
 
-export async function saveFeishuConfig(input: { appId?: string; appSecret?: string; domain: FeishuDomain; enabled: boolean }): Promise<FeishuConfigView> {
-  const config = await readConfig();
-  const channels = isRecord(config.channels) ? { ...config.channels } : {};
-  const current = isRecord(channels.feishu) ? channels.feishu : {};
-  channels.feishu = {
-    ...current,
-    enabled: input.enabled,
-    domain: input.domain,
-    connectionMode: "websocket",
-    dmPolicy: readString(current.dmPolicy) || "pairing",
-    groupPolicy: readString(current.groupPolicy) || "disabled",
-    ...(input.appId !== undefined ? { appId: normalizeAppId(input.appId) } : {}),
-    ...(input.appSecret !== undefined ? { appSecret: normalizeAppSecret(input.appSecret) } : {}),
-  };
-  config.channels = channels;
-  await writeConfig(config);
+export async function saveFeishuConfig(input: { appId?: string; appSecret?: string; domain: FeishuDomain; enabled: boolean; ownerOpenId?: string }): Promise<FeishuConfigView> {
+  const ownerOpenId =
+    input.ownerOpenId === undefined
+      ? undefined
+      : normalizeOwnerOpenId(input.ownerOpenId);
+  await updateConfig((config) => {
+    const channels = isRecord(config.channels) ? { ...config.channels } : {};
+    const current = isRecord(channels.feishu) ? channels.feishu : {};
+    channels.feishu = {
+      ...current,
+      enabled: input.enabled,
+      domain: input.domain,
+      connectionMode: "websocket",
+      dmPolicy:
+        ownerOpenId === undefined
+          ? readString(current.dmPolicy) || "pairing"
+          : "allowlist",
+      groupPolicy: readString(current.groupPolicy) || "disabled",
+      ...(input.appId !== undefined ? { appId: normalizeAppId(input.appId) } : {}),
+      ...(input.appSecret !== undefined ? { appSecret: normalizeAppSecret(input.appSecret) } : {}),
+      ...(ownerOpenId !== undefined ? { allowFrom: [ownerOpenId] } : {}),
+    };
+    config.channels = channels;
+  });
   return getFeishuConfig();
 }
 

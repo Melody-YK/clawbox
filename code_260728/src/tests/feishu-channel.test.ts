@@ -8,6 +8,7 @@ const STATE = path.join(ROOT, ".openclaw");
 const CONFIG = path.join(STATE, "openclaw.json");
 const APP_ID = "cli_1234567890";
 const APP_SECRET = "abcdefghijklmnopqrstuvwxyz123456";
+const OWNER_OPEN_ID = "ou_7dab8a3d3cdcc9da365777c7ad535d62";
 let feishu: typeof import("@/lib/channels/feishu");
 
 beforeAll(async () => {
@@ -37,6 +38,55 @@ describe("Feishu credentials and config", () => {
     expect(stored.channels.feishu).toMatchObject({ enabled: true, appId: APP_ID, appSecret: APP_SECRET, domain: "feishu", connectionMode: "websocket", dmPolicy: "pairing", groupPolicy: "disabled" });
     expect(view).toMatchObject({ configured: true, enabled: true, hasAppSecret: true, appId: APP_ID });
     expect(JSON.stringify(view)).not.toContain(APP_SECRET);
+  });
+
+  it("restricts QR setup to the Feishu user who scanned the code", async () => {
+    await feishu.saveFeishuConfig({
+      appId: APP_ID,
+      appSecret: APP_SECRET,
+      domain: "feishu",
+      enabled: true,
+      ownerOpenId: OWNER_OPEN_ID,
+    });
+
+    const stored = JSON.parse(await fs.readFile(CONFIG, "utf-8"));
+    expect(stored.channels.feishu).toMatchObject({
+      dmPolicy: "allowlist",
+      allowFrom: [OWNER_OPEN_ID],
+    });
+  });
+
+  it.each(["", "   ", "not-an-open-id", "ou_bad value"])(
+    "rejects malformed QR owner Open ID %j",
+    async (ownerOpenId) => {
+      await expect(
+        feishu.saveFeishuConfig({
+          appId: APP_ID,
+          appSecret: APP_SECRET,
+          domain: "feishu",
+          enabled: true,
+          ownerOpenId,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_credentials" });
+    },
+  );
+
+  it("preserves the existing direct-message policy for manual saves", async () => {
+    await feishu.saveFeishuConfig({
+      appId: APP_ID,
+      appSecret: APP_SECRET,
+      domain: "feishu",
+      enabled: true,
+      ownerOpenId: OWNER_OPEN_ID,
+    });
+    await feishu.saveFeishuConfig({ domain: "lark", enabled: true });
+
+    const stored = JSON.parse(await fs.readFile(CONFIG, "utf-8"));
+    expect(stored.channels.feishu).toMatchObject({
+      domain: "lark",
+      dmPolicy: "allowlist",
+      allowFrom: [OWNER_OPEN_ID],
+    });
   });
 });
 

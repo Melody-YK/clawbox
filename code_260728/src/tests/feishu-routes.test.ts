@@ -6,8 +6,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const ROOT = path.join(os.tmpdir(), `clawbox-feishu-routes-${process.pid}-${Date.now()}`);
 const DATA = path.join(ROOT, "data");
 const CONFIG = path.join(DATA, "config.json");
+class TestQrSessionError extends Error {
+  readonly errorCode = "qr_session_busy";
+  readonly httpStatus = 409;
+}
 const mocks = {
-  get: vi.fn(), credentials: vi.fn(), validate: vi.fn(), save: vi.fn(), wait: vi.fn(), probe: vi.fn(), list: vi.fn(), approve: vi.fn(), restart: vi.fn(),
+  get: vi.fn(), credentials: vi.fn(), validate: vi.fn(), save: vi.fn(), wait: vi.fn(), probe: vi.fn(), list: vi.fn(), approve: vi.fn(), restart: vi.fn(), beginManual: vi.fn(), releaseManual: vi.fn(),
 };
 let configGet: () => Promise<Response>; let configPost: (r: Request) => Promise<Response>; let pairingGet: () => Promise<Response>; let pairingPost: (r: Request) => Promise<Response>;
 const request = (body: unknown) => new Request("http://localhost/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -16,6 +20,7 @@ const setup = async (value: Record<string, unknown>) => { await fs.mkdir(DATA, {
 beforeAll(async () => {
   process.env.CLAWBOX_ROOT = ROOT; vi.resetModules();
   vi.doMock("@/lib/channels/feishu", () => ({ getFeishuConfig: mocks.get, getFeishuCredentials: mocks.credentials, validateFeishuCredentials: mocks.validate, saveFeishuConfig: mocks.save, waitForFeishuConnected: mocks.wait, probeFeishuChannel: mocks.probe, listFeishuPairingRequests: mocks.list, approveFeishuPairing: mocks.approve }));
+  vi.doMock("@/lib/channels/feishu-qrcode", () => ({ beginFeishuManualConfig: mocks.beginManual, FeishuQrSessionError: TestQrSessionError }));
   vi.doMock("@/lib/openclaw-config", () => ({ restartGateway: mocks.restart }));
   ({ GET: configGet, POST: configPost } = await import("@/app/setup-api/channels/feishu/route"));
   ({ GET: pairingGet, POST: pairingPost } = await import("@/app/setup-api/channels/feishu/pairing/route"));
@@ -24,14 +29,16 @@ beforeEach(async () => {
   Object.values(mocks).forEach((mock) => mock.mockReset()); await fs.rm(DATA, { recursive: true, force: true }); await fs.mkdir(DATA, { recursive: true });
   mocks.get.mockResolvedValue({ configured: false, enabled: false, hasAppSecret: false, appId: null, domain: "feishu" }); mocks.credentials.mockResolvedValue(null);
   mocks.validate.mockResolvedValue(undefined); mocks.save.mockResolvedValue({ configured: true, enabled: true, hasAppSecret: true, appId: "cli_1234567890", domain: "feishu" }); mocks.restart.mockResolvedValue(undefined);
+  mocks.beginManual.mockReturnValue(mocks.releaseManual);
   mocks.wait.mockResolvedValue({ state: "connected", configured: true, enabled: true, connected: true, running: true, probeOk: true, botName: "ClawBox", botOpenId: "ou_123" }); mocks.list.mockResolvedValue([]); mocks.approve.mockResolvedValue(undefined);
 });
-afterAll(async () => { delete process.env.CLAWBOX_ROOT; vi.doUnmock("@/lib/channels/feishu"); vi.doUnmock("@/lib/openclaw-config"); await fs.rm(ROOT, { recursive: true, force: true }); });
+afterAll(async () => { delete process.env.CLAWBOX_ROOT; vi.doUnmock("@/lib/channels/feishu"); vi.doUnmock("@/lib/channels/feishu-qrcode"); vi.doUnmock("@/lib/openclaw-config"); await fs.rm(ROOT, { recursive: true, force: true }); });
 
 describe("Feishu config route", () => {
   it("never returns the App Secret", async () => { mocks.get.mockResolvedValue({ configured: true, enabled: true, hasAppSecret: true, appId: "cli_1234567890", domain: "feishu" }); await setup({}); const response = await configGet(); expect(response.status).toBe(200); expect(JSON.stringify(await response.json())).not.toContain("appSecret"); });
   it("blocks setup until AI is configured", async () => { await setup({}); const response = await configPost(request({ appId: "cli_1234567890", appSecret: "abcdefghijklmnopqrstuvwxyz123456" })); expect(response.status).toBe(409); expect(mocks.validate).not.toHaveBeenCalled(); });
-  it("validates, saves, restarts, and waits for online status", async () => { await setup({ ai_model_configured: true }); const response = await configPost(request({ appId: "cli_1234567890", appSecret: "abcdefghijklmnopqrstuvwxyz123456", domain: "feishu", enabled: true })); const body = await response.json(); expect(response.status).toBe(200); expect(body.connected).toBe(true); expect(mocks.validate).toHaveBeenCalled(); expect(mocks.restart).toHaveBeenCalledOnce(); expect(mocks.wait).toHaveBeenCalledOnce(); });
+  it("validates, saves, restarts, and waits for online status", async () => { await setup({ ai_model_configured: true }); const response = await configPost(request({ appId: "cli_1234567890", appSecret: "abcdefghijklmnopqrstuvwxyz123456", domain: "feishu", enabled: true })); const body = await response.json(); expect(response.status).toBe(200); expect(body.connected).toBe(true); expect(mocks.validate).toHaveBeenCalled(); expect(mocks.restart).toHaveBeenCalledOnce(); expect(mocks.wait).toHaveBeenCalledOnce(); expect(mocks.releaseManual).toHaveBeenCalledOnce(); });
+  it("returns 409 instead of overwriting an active QR setup", async () => { await setup({ ai_model_configured: true }); mocks.beginManual.mockImplementation(() => { throw new TestQrSessionError("QR active"); }); const response = await configPost(request({ appId: "cli_1234567890", appSecret: "abcdefghijklmnopqrstuvwxyz123456" })); const body = await response.json(); expect(response.status).toBe(409); expect(body.errorCode).toBe("qr_session_busy"); expect(mocks.save).not.toHaveBeenCalled(); });
   it("reports saved=true when Gateway restart fails", async () => { await setup({ ai_model_configured: true }); mocks.restart.mockRejectedValue(new Error("denied")); const response = await configPost(request({ appId: "cli_1234567890", appSecret: "abcdefghijklmnopqrstuvwxyz123456" })); expect(response.status).toBe(502); expect((await response.json()).saved).toBe(true); });
 });
 

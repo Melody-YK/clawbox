@@ -8,8 +8,18 @@ import {
   validateQQBotCredentials,
   waitForQQBotConnected,
 } from "@/lib/channels/qqbot";
+import {
+  beginQQBotManualConfig,
+  QQBotQrSetupError,
+} from "@/lib/channels/qqbot-qr";
 
 export const dynamic = "force-dynamic";
+
+interface QQBotConfigBody {
+  appId?: unknown;
+  clientSecret?: unknown;
+  enabled?: unknown;
+}
 
 function message(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -42,47 +52,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
-  const setup = await getAll();
-  if (!setup.ai_model_configured) {
-    return NextResponse.json(
-      { error: "Configure your AI provider before setting up QQ Bot." },
-      { status: 409 },
-    );
-  }
-
-  let body: {
-    appId?: unknown;
-    clientSecret?: unknown;
-    enabled?: unknown;
-  };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
-    return NextResponse.json(
-      { error: "enabled must be a boolean" },
-      { status: 400 },
-    );
-  }
-  if (body.appId !== undefined && typeof body.appId !== "string") {
-    return NextResponse.json(
-      { error: "appId must be a string" },
-      { status: 400 },
-    );
-  }
-  if (
-    body.clientSecret !== undefined &&
-    typeof body.clientSecret !== "string"
-  ) {
-    return NextResponse.json(
-      { error: "clientSecret must be a string" },
-      { status: 400 },
-    );
-  }
-
+async function saveManualConfig(body: QQBotConfigBody): Promise<NextResponse> {
   const enabled = body.enabled !== false;
   const incomingAppId =
     typeof body.appId === "string" && body.appId.trim()
@@ -171,5 +141,61 @@ export async function POST(request: Request) {
       { error: errorMessage, saved: true, ...saved },
       { status: 502 },
     );
+  }
+}
+
+export async function POST(request: Request) {
+  const setup = await getAll();
+  if (!setup.ai_model_configured) {
+    return NextResponse.json(
+      { error: "Configure your AI provider before setting up QQ Bot." },
+      { status: 409 },
+    );
+  }
+
+  let body: QQBotConfigBody;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
+    return NextResponse.json(
+      { error: "enabled must be a boolean" },
+      { status: 400 },
+    );
+  }
+  if (body.appId !== undefined && typeof body.appId !== "string") {
+    return NextResponse.json(
+      { error: "appId must be a string" },
+      { status: 400 },
+    );
+  }
+  if (
+    body.clientSecret !== undefined &&
+    typeof body.clientSecret !== "string"
+  ) {
+    return NextResponse.json(
+      { error: "clientSecret must be a string" },
+      { status: 400 },
+    );
+  }
+
+  let release: () => void;
+  try {
+    release = beginQQBotManualConfig();
+  } catch (error) {
+    if (error instanceof QQBotQrSetupError) {
+      return NextResponse.json(
+        { errorCode: error.errorCode, error: error.message },
+        { status: error.httpStatus },
+      );
+    }
+    throw error;
+  }
+  try {
+    return await saveManualConfig(body);
+  } finally {
+    release();
   }
 }

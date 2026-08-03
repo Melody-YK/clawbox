@@ -19,6 +19,10 @@ const DATA = path.join(ROOT, "data");
 const CONFIG = path.join(DATA, "config.json");
 const APP_ID = "1023456789";
 const APP_SECRET = "qq-client-secret-1234567890";
+class TestQrSetupError extends Error {
+  readonly errorCode = "qr_session_busy";
+  readonly httpStatus = 409;
+}
 const mocks = {
   get: vi.fn(),
   credentials: vi.fn(),
@@ -27,6 +31,8 @@ const mocks = {
   wait: vi.fn(),
   probe: vi.fn(),
   restart: vi.fn(),
+  beginManual: vi.fn(),
+  releaseManual: vi.fn(),
 };
 let configGet: () => Promise<Response>;
 let configPost: (request: Request) => Promise<Response>;
@@ -55,6 +61,10 @@ beforeAll(async () => {
     saveQQBotConfig: mocks.save,
     waitForQQBotConnected: mocks.wait,
     probeQQBotChannel: mocks.probe,
+  }));
+  vi.doMock("@/lib/channels/qqbot-qr", () => ({
+    beginQQBotManualConfig: mocks.beginManual,
+    QQBotQrSetupError: TestQrSetupError,
   }));
   vi.doMock("@/lib/openclaw-config", () => ({
     restartGateway: mocks.restart,
@@ -86,6 +96,7 @@ beforeEach(async () => {
     appId: APP_ID,
   });
   mocks.restart.mockResolvedValue(undefined);
+  mocks.beginManual.mockReturnValue(mocks.releaseManual);
   mocks.wait.mockResolvedValue({
     state: "connected",
     configured: true,
@@ -111,6 +122,7 @@ beforeEach(async () => {
 afterAll(async () => {
   delete process.env.CLAWBOX_ROOT;
   vi.doUnmock("@/lib/channels/qqbot");
+  vi.doUnmock("@/lib/channels/qqbot-qr");
   vi.doUnmock("@/lib/openclaw-config");
   await fs.rm(ROOT, { recursive: true, force: true });
 });
@@ -156,6 +168,23 @@ describe("QQ Bot config route", () => {
     expect(mocks.save).toHaveBeenCalledOnce();
     expect(mocks.restart).toHaveBeenCalledOnce();
     expect(mocks.wait).toHaveBeenCalledOnce();
+    expect(mocks.releaseManual).toHaveBeenCalledOnce();
+  });
+
+  it("returns 409 instead of overwriting an active QR setup", async () => {
+    await setup({ ai_model_configured: true });
+    mocks.beginManual.mockImplementation(() => {
+      throw new TestQrSetupError("QR active");
+    });
+
+    const response = await configPost(
+      request({ appId: APP_ID, clientSecret: APP_SECRET }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.errorCode).toBe("qr_session_busy");
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 
   it("does not save credentials rejected by QQ Open Platform", async () => {

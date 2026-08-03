@@ -80,6 +80,25 @@ interface ChannelRuntimeStatus {
   publicWebhookUrl?: string | null;
 }
 
+type AutoQrChannelId = "feishu" | "qqbot";
+type ChannelQrStatus =
+  | "pending"
+  | "saving"
+  | "connected"
+  | "expired"
+  | "error"
+  | "cancelled";
+
+interface ChannelQrSession {
+  sessionId: string;
+  status: ChannelQrStatus;
+  qrUrl: string | null;
+  expiresAt: number | null;
+  errorCode: string | null;
+  error: string | null;
+  domain?: "feishu" | "lark" | null;
+}
+
 /* ── Constants ── */
 
 const MAX_HISTORY = 30;
@@ -129,9 +148,9 @@ const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string
   { id: "wechat", tag: "WX", name: "WeChat", description: "Sign in to a Tencent iLink bot with a QR code; direct messages only." },
   { id: "telegram", tag: "TG", name: "Telegram", description: "Create a bot with BotFather, then paste its complete Bot Token." },
   { id: "whatsapp", tag: "WA", name: "WhatsApp", description: "Link a WhatsApp account by scanning a QR code. No Bot Token is needed." },
-  { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Connect an enterprise self-built app over WebSocket." },
+  { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Create or connect a Feishu / Lark bot by scanning a QR code." },
   { id: "line", tag: "LN", name: "LINE", description: "Connect a LINE Messaging API bot through a public HTTPS webhook." },
-  { id: "qqbot", tag: "QQ", name: "QQ Bot", description: "Connect an official QQ bot with its AppID and AppSecret." },
+  { id: "qqbot", tag: "QQ", name: "QQ Bot", description: "Create or connect an official QQ bot by scanning a QR code." },
 ];
 
 const CHANNEL_STATUS_PATHS: Record<ConfigurableChatChannelId, string> = {
@@ -149,6 +168,34 @@ const CONFIGURABLE_CHAT_CHANNELS: readonly ConfigurableChatChannelId[] = [
   "line",
   "qqbot",
 ];
+
+const AUTO_QR_CHANNELS: readonly AutoQrChannelId[] = ["feishu", "qqbot"];
+
+const QR_OWNER_STORAGE_KEY = "clawbox.channelQrOwner";
+const QR_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const QR_OPAQUE_OWNER_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const QR_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  ai_model_required: "Configure an AI provider before setting up chat channels.",
+  setup_state_failed: "Unable to read setup state.",
+  qr_owner_invalid: "This QR setup tab is no longer valid. Refresh the page and try again.",
+  qr_session_required: "This QR setup session is no longer available. Generate a new QR code.",
+  qr_session_invalid: "This QR setup session is no longer available. Generate a new QR code.",
+  qr_session_mismatch: "This QR setup session is no longer available. Generate a new QR code.",
+  qr_session_conflict: "Another browser tab is configuring this channel. Finish or cancel it there first.",
+  qr_session_busy: "This channel is finishing QR setup. Wait for it to complete.",
+  manual_config_busy: "Manual configuration is being saved. Wait for it to finish.",
+  qr_start_failed: "Unable to start QR setup.",
+  qr_start_timeout: "QR setup took too long to start. Try again.",
+  qr_invalid_url: "The service returned an invalid QR code.",
+  qr_authorization_denied: "QR authorization was declined.",
+  qr_authorization_failed: "QR authorization could not be completed.",
+  qr_expired: "The QR code expired. Generating a new one...",
+  qr_credentials_missing: "The service did not return bot credentials.",
+  qr_save_failed: "Bot credentials could not be saved.",
+  gateway_restart_failed: "Credentials were saved, but OpenClaw could not reconnect the gateway.",
+  channel_connect_failed: "Credentials were saved, but the channel did not come online.",
+};
 
 const CHANNEL_COPY = {
   en: {
@@ -441,6 +488,84 @@ function isChannelOnline(channel: ChatChannelId, status: ChannelRuntimeStatus | 
   return status?.connected === true;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createQrOwnerToken(): string {
+  if (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  if (typeof window !== "undefined" && window.crypto?.getRandomValues) {
+    const bytes = window.crypto.getRandomValues(new Uint8Array(24));
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  throw new Error("Secure random values are unavailable in this browser.");
+}
+
+function isValidQrOwnerToken(value: string | null): value is string {
+  return Boolean(
+    value &&
+      (QR_UUID_PATTERN.test(value) || QR_OPAQUE_OWNER_PATTERN.test(value)),
+  );
+}
+
+function channelQrErrorMessage(payload: unknown, fallback: string): string {
+  if (!isRecord(payload)) return t(fallback);
+  const errorCode = typeof payload.errorCode === "string" ? payload.errorCode : null;
+  if (errorCode && QR_ERROR_MESSAGES[errorCode]) return t(QR_ERROR_MESSAGES[errorCode]);
+  return t(typeof payload.error === "string" && payload.error ? payload.error : fallback);
+}
+
+function parseChannelQrSession(payload: unknown): ChannelQrSession | null {
+  if (!isRecord(payload)) return null;
+  const value = isRecord(payload.session) ? payload.session : payload;
+  const validStatuses: readonly ChannelQrStatus[] = [
+    "pending",
+    "saving",
+    "connected",
+    "expired",
+    "error",
+    "cancelled",
+  ];
+  if (
+    typeof value.sessionId !== "string" ||
+    typeof value.status !== "string" ||
+    !validStatuses.includes(value.status as ChannelQrStatus)
+  ) {
+    return null;
+  }
+
+  let qrUrl: string | null = null;
+  if (typeof value.qrUrl === "string") {
+    try {
+      const parsed = new URL(value.qrUrl);
+      if (parsed.protocol === "https:") qrUrl = parsed.toString();
+    } catch {
+      // The server remains the source of truth; an invalid URL is never rendered.
+    }
+  }
+
+  return {
+    sessionId: value.sessionId,
+    status: value.status as ChannelQrStatus,
+    qrUrl,
+    expiresAt:
+      typeof value.expiresAt === "number" && Number.isFinite(value.expiresAt)
+        ? value.expiresAt
+        : null,
+    errorCode:
+      typeof value.errorCode === "string" && value.errorCode
+        ? value.errorCode
+        : null,
+    error: typeof value.error === "string" && value.error ? value.error : null,
+    domain:
+      value.domain === "feishu" || value.domain === "lark"
+        ? value.domain
+        : null,
+  };
+}
+
 function ChannelStatusSummary({
   channel,
   status,
@@ -478,6 +603,123 @@ function ChannelStatusSummary({
       <p className={`text-xs font-semibold ${color}`}>{label}</p>
       {status.lastError && <p className="mt-1 break-words text-[11px] leading-relaxed text-red-300">{status.lastError}</p>}
     </div>
+  );
+}
+
+function ChannelQrSetupPanel({
+  channel,
+  enabled,
+  disabled,
+  loading,
+  session,
+  onStart,
+  onCancel,
+  onSaveDisabled,
+}: {
+  channel: AutoQrChannelId;
+  enabled: boolean;
+  disabled: boolean;
+  loading: boolean;
+  session: ChannelQrSession | undefined;
+  onStart: () => void;
+  onCancel: () => void;
+  onSaveDisabled: () => void;
+}) {
+  const pending = session?.status === "pending" || session?.status === "expired";
+  const saving = session?.status === "saving";
+  const statusText = session?.status === "pending"
+    ? channel === "feishu"
+      ? t("Open Feishu or Lark on your phone, scan the code, and confirm the app.")
+      : t("Open QQ on your phone, scan the code, and choose or create the bot.")
+    : session?.status === "saving"
+      ? t("Authorization approved. Saving credentials and connecting OpenClaw...")
+      : session?.status === "connected"
+        ? t("Connected. Credentials are stored securely on this device.")
+        : session?.status === "expired"
+          ? t("The QR code expired. A refreshed code will appear automatically, or refresh it now.")
+          : session?.status === "cancelled"
+            ? t("QR setup cancelled.")
+            : session?.status === "error"
+              ? channelQrErrorMessage(session, "Unable to complete QR setup.")
+              : t("No App ID or App Secret is required when you use QR setup.");
+  const statusColor = session?.status === "connected"
+    ? "text-[#00e5cc]"
+    : session?.status === "error"
+      ? "text-red-300"
+      : "text-[var(--text-muted)]";
+
+  return (
+    <section
+      aria-label={t(channel === "feishu" ? "Feishu QR setup" : "QQ Bot QR setup")}
+      className="space-y-3 border-y border-[var(--border-subtle)] py-4"
+    >
+      <div>
+        <p className="text-sm font-semibold text-[var(--text-primary)]">{t("Scan to connect")}</p>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+          {t(channel === "feishu"
+            ? "Create and configure a Feishu or Lark bot automatically with the official authorization flow."
+            : "Bind an official QQ bot automatically with the official QQ authorization flow.")}
+        </p>
+      </div>
+
+      {session?.qrUrl && pending && (
+        <div className="mx-auto flex aspect-square w-full max-w-[220px] items-center justify-center rounded-md bg-white p-3">
+          <QRCodeSVG
+            value={session.qrUrl}
+            size={196}
+            level="M"
+            className="h-full w-full"
+            aria-label={t(channel === "feishu" ? "Feishu authorization QR code" : "QQ Bot authorization QR code")}
+          />
+        </div>
+      )}
+
+      <p aria-live="polite" className={`text-xs leading-relaxed ${statusColor}`}>
+        {statusText}
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        {enabled ? (
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={disabled || loading || saving}
+            className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}
+          >
+            {(loading || saving) && ButtonSpinner}
+            {loading
+              ? t("Preparing QR code...")
+              : saving
+                ? t("Connecting...")
+                : pending
+                  ? t("Refresh QR code")
+                  : session?.status === "connected"
+                    ? t("Connect another bot")
+                    : t("Generate QR code")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSaveDisabled}
+            disabled={disabled || loading || pending || saving}
+            className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}
+          >
+            {loading && ButtonSpinner}
+            {t("Save disabled state")}
+          </button>
+        )}
+        {pending && (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-lg border border-gray-600 px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:opacity-50"
+          >
+            {t("Cancel")}
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -770,6 +1012,17 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [channelSaving, setChannelSaving] = useState<ConfigurableChatChannelId | null>(null);
   const [channelStatuses, setChannelStatuses] = useState<Record<string, SectionStatusMessage>>({});
   const [channelRuntimeStatuses, setChannelRuntimeStatuses] = useState<Partial<Record<ConfigurableChatChannelId, ChannelRuntimeStatus>>>({});
+  const [channelQrSessions, setChannelQrSessions] = useState<Partial<Record<AutoQrChannelId, ChannelQrSession>>>({});
+  const [channelQrLoading, setChannelQrLoading] = useState<Partial<Record<AutoQrChannelId, boolean>>>({});
+  const channelQrSessionsRef = useRef<Partial<Record<AutoQrChannelId, ChannelQrSession>>>({});
+  const channelQrOwnerRef = useRef<string | null>(null);
+  const channelQrRequestVersionsRef = useRef<Record<AutoQrChannelId, number>>({
+    feishu: 0,
+    qqbot: 0,
+  });
+  const channelQrRefreshesRef = useRef<Partial<Record<AutoQrChannelId, boolean>>>({});
+  const channelQrActionsRef = useRef<Partial<Record<AutoQrChannelId, boolean>>>({});
+  const feishuQrAutoRefreshRef = useRef<string | null>(null);
   const [feishuDomain, setFeishuDomain] = useState<"feishu" | "lark">("feishu");
   const [whatsappMode, setWhatsappMode] = useState<"dedicated" | "personal">("dedicated");
   const [whatsappOwnerNumber, setWhatsappOwnerNumber] = useState("");
@@ -984,6 +1237,59 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     setChannelConfigs((current) => ({ ...current, [channel]: { ...(current[channel] || {}), [field]: value } }));
   };
 
+  const getChannelQrOwner = useCallback(() => {
+    if (channelQrOwnerRef.current) return channelQrOwnerRef.current;
+    let owner: string | null = null;
+    try {
+      owner = window.sessionStorage.getItem(QR_OWNER_STORAGE_KEY)?.trim() || null;
+    } catch {
+      // The in-memory token still isolates this page when storage is unavailable.
+    }
+    if (!isValidQrOwnerToken(owner)) {
+      owner = createQrOwnerToken();
+      try {
+        window.sessionStorage.setItem(QR_OWNER_STORAGE_KEY, owner);
+      } catch {
+        // Keep the generated token in memory for this page lifetime.
+      }
+    }
+    channelQrOwnerRef.current = owner;
+    return owner;
+  }, []);
+
+  const channelQrHeaders = useCallback((channel: AutoQrChannelId) => {
+    const headers: Record<string, string> = {
+      "x-clawbox-qr-owner": getChannelQrOwner(),
+    };
+    const sessionId = channelQrSessionsRef.current[channel]?.sessionId;
+    if (sessionId) headers["x-clawbox-qr-session"] = sessionId;
+    return headers;
+  }, [getChannelQrOwner]);
+
+  const refreshStoredChannelConfig = useCallback(async (
+    channel: AutoQrChannelId,
+    signal?: AbortSignal,
+  ) => {
+    const response = await fetch("/setup-api/channels", {
+      signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const payload = (await response.json().catch(() => null)) as unknown;
+    if (!isRecord(payload) || !isRecord(payload.channels)) return;
+    const stored = payload.channels[channel];
+    if (!isRecord(stored)) return;
+    const config = Object.fromEntries(
+      Object.entries(stored).filter((entry): entry is [string, string | boolean] =>
+        typeof entry[1] === "string" || typeof entry[1] === "boolean"),
+    );
+    setChannelConfigs((current) => ({
+      ...current,
+      [channel]: { ...(current[channel] || {}), ...config },
+    }));
+    if (channel === "feishu" && config.domain === "lark") setFeishuDomain("lark");
+  }, []);
+
   const saveChatChannel = async (channel: ConfigurableChatChannelId) => {
     setChannelSaving(channel);
     setChannelStatuses((current) => { const next = { ...current }; delete next[channel]; return next; });
@@ -1003,13 +1309,15 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
       const data = (await response.json().catch(() => ({}))) as ChannelRuntimeStatus & {
         saved?: boolean;
+        errorCode?: string;
         error?: string;
       };
+      const backendError = channelQrErrorMessage(data, "Unable to save channel settings.");
       const statusMessage = response.ok
         ? t("Channel settings saved. The gateway is reloading.")
         : data.saved === true
-          ? `${t("Channel settings saved. The gateway is reloading.")} ${data.error || t("The channel is not online yet.")}`
-          : data.error || t("Unable to save channel settings.");
+          ? `${t("Channel settings saved. The gateway is reloading.")} ${data.error ? t(data.error) : t("The channel is not online yet.")}`
+          : backendError;
       setChannelStatuses((current) => ({
         ...current,
         [channel]: { type: response.ok ? "success" : "error", message: statusMessage },
@@ -1032,6 +1340,254 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       setChannelSaving(null);
     }
   };
+
+  const storeChannelQrSession = useCallback((
+    channel: AutoQrChannelId,
+    payload: unknown,
+  ): ChannelQrSession | null => {
+    const session = parseChannelQrSession(payload);
+    if (session) {
+      setChannelQrSessions((current) => {
+        const next = { ...current, [channel]: session };
+        channelQrSessionsRef.current = next;
+        return next;
+      });
+      if (channel === "feishu" && session.domain) setFeishuDomain(session.domain);
+      return session;
+    }
+    if (isRecord(payload) && "session" in payload && payload.session === null) {
+      setChannelQrSessions((current) => {
+        const next = { ...current };
+        delete next[channel];
+        channelQrSessionsRef.current = next;
+        return next;
+      });
+    }
+    return null;
+  }, []);
+
+  const refreshChannelQrSession = useCallback(async (
+    channel: AutoQrChannelId,
+    signal?: AbortSignal,
+  ) => {
+    if (
+      channelQrActionsRef.current[channel] ||
+      channelQrRefreshesRef.current[channel]
+    ) return;
+    channelQrRefreshesRef.current[channel] = true;
+    const requestVersion = channelQrRequestVersionsRef.current[channel] + 1;
+    channelQrRequestVersionsRef.current[channel] = requestVersion;
+    const isLatestRequest = () =>
+      channelQrRequestVersionsRef.current[channel] === requestVersion &&
+      !channelQrActionsRef.current[channel];
+    try {
+      const response = await fetch(`/setup-api/channels/${channel}/qrcode`, {
+        headers: channelQrHeaders(channel),
+        signal,
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (signal?.aborted || !isLatestRequest()) return;
+      const session = storeChannelQrSession(channel, payload);
+      if (!response.ok) {
+        const error = channelQrErrorMessage(payload, "Unable to check QR setup status.");
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "error", message: error },
+        }));
+        return;
+      }
+      if (session?.status === "connected") {
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "success", message: t("QR setup completed and the channel is connected.") },
+        }));
+        if (!isLatestRequest()) return;
+        await Promise.all([
+          refreshStoredChannelConfig(channel, signal),
+          refreshChannelRuntimeStatus(channel, signal),
+        ]);
+      } else if (session?.status === "error") {
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "error", message: channelQrErrorMessage(session, "Unable to complete QR setup.") },
+        }));
+      }
+    } catch (error) {
+      if (signal?.aborted || !isLatestRequest()) return;
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: {
+          type: "error",
+          message: `${t("Unable to check QR setup status.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
+    } finally {
+      channelQrRefreshesRef.current[channel] = false;
+    }
+  }, [channelQrHeaders, refreshChannelRuntimeStatus, refreshStoredChannelConfig, storeChannelQrSession]);
+
+  const requestChannelQr = async (channel: AutoQrChannelId) => {
+    if (!canConfigureWechat) {
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: { type: "error", message: t("Configure an AI provider before setting up chat channels.") },
+      }));
+      return;
+    }
+    if (channelQrActionsRef.current[channel]) return;
+    channelQrActionsRef.current[channel] = true;
+    const requestVersion = channelQrRequestVersionsRef.current[channel] + 1;
+    channelQrRequestVersionsRef.current[channel] = requestVersion;
+    const isLatestRequest = () =>
+      channelQrRequestVersionsRef.current[channel] === requestVersion &&
+      channelQrActionsRef.current[channel] === true;
+    setChannelQrLoading((current) => ({ ...current, [channel]: true }));
+    setChannelStatuses((current) => {
+      const next = { ...current };
+      delete next[channel];
+      return next;
+    });
+    try {
+      const response = await fetch(`/setup-api/channels/${channel}/qrcode`, {
+        method: "POST",
+        headers: channelQrHeaders(channel),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!isLatestRequest()) return;
+      const session = storeChannelQrSession(channel, payload);
+      if (!response.ok) {
+        const error = channelQrErrorMessage(payload, "Unable to generate a QR code.");
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "error", message: error },
+        }));
+        return;
+      }
+      if (!session) {
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "error", message: t("The server did not return a QR setup session.") },
+        }));
+      } else if (session.status === "connected") {
+        await Promise.all([
+          refreshStoredChannelConfig(channel),
+          refreshChannelRuntimeStatus(channel),
+        ]);
+      }
+    } catch (error) {
+      if (!isLatestRequest()) return;
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: {
+          type: "error",
+          message: `${t("Unable to generate a QR code.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
+    } finally {
+      if (channelQrRequestVersionsRef.current[channel] === requestVersion) {
+        channelQrActionsRef.current[channel] = false;
+        setChannelQrLoading((current) => {
+          const next = { ...current };
+          delete next[channel];
+          return next;
+        });
+      }
+    }
+  };
+
+  const cancelChannelQr = async (channel: AutoQrChannelId) => {
+    if (channelQrActionsRef.current[channel]) return;
+    channelQrActionsRef.current[channel] = true;
+    const requestVersion = channelQrRequestVersionsRef.current[channel] + 1;
+    channelQrRequestVersionsRef.current[channel] = requestVersion;
+    const isLatestRequest = () =>
+      channelQrRequestVersionsRef.current[channel] === requestVersion &&
+      channelQrActionsRef.current[channel] === true;
+    setChannelQrLoading((current) => ({ ...current, [channel]: true }));
+    try {
+      const response = await fetch(`/setup-api/channels/${channel}/qrcode`, {
+        method: "DELETE",
+        headers: channelQrHeaders(channel),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!isLatestRequest()) return;
+      const session = storeChannelQrSession(channel, payload);
+      if (!response.ok) {
+        const error = channelQrErrorMessage(payload, "Unable to cancel QR setup.");
+        setChannelStatuses((current) => ({
+          ...current,
+          [channel]: { type: "error", message: error },
+        }));
+      } else if (session?.status === "cancelled") {
+        setChannelStatuses((current) => {
+          const next = { ...current };
+          delete next[channel];
+          return next;
+        });
+      }
+    } catch (error) {
+      if (!isLatestRequest()) return;
+      setChannelStatuses((current) => ({
+        ...current,
+        [channel]: {
+          type: "error",
+          message: `${t("Unable to cancel QR setup.")}: ${error instanceof Error ? error.message : error}`,
+        },
+      }));
+    } finally {
+      if (channelQrRequestVersionsRef.current[channel] === requestVersion) {
+        channelQrActionsRef.current[channel] = false;
+        setChannelQrLoading((current) => {
+          const next = { ...current };
+          delete next[channel];
+          return next;
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    AUTO_QR_CHANNELS.forEach((channel) => {
+      void refreshChannelQrSession(channel, controller.signal);
+    });
+    return () => controller.abort();
+  }, [refreshChannelQrSession]);
+
+  const feishuQrSession = channelQrSessions.feishu;
+  const feishuQrStatus = feishuQrSession?.status;
+  const qqbotQrStatus = channelQrSessions.qqbot?.status;
+  useEffect(() => {
+    if (feishuQrStatus !== "expired" || !feishuQrSession) return;
+    const refreshKey = feishuQrSession.sessionId;
+    if (feishuQrAutoRefreshRef.current === refreshKey) return;
+    feishuQrAutoRefreshRef.current = refreshKey;
+    void requestChannelQr("feishu");
+  }, [feishuQrSession, feishuQrStatus]);
+
+  useEffect(() => {
+    const pollingChannels: AutoQrChannelId[] = [];
+    if (feishuQrStatus === "pending" || feishuQrStatus === "saving") {
+      pollingChannels.push("feishu");
+    }
+    if (qqbotQrStatus === "pending" || qqbotQrStatus === "saving" || qqbotQrStatus === "expired") {
+      pollingChannels.push("qqbot");
+    }
+    if (pollingChannels.length === 0) return;
+    const controller = new AbortController();
+    const poll = () => pollingChannels.forEach((channel) => {
+      void refreshChannelQrSession(channel, controller.signal);
+    });
+    poll();
+    const interval = window.setInterval(poll, 1_500);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [feishuQrStatus, qqbotQrStatus, refreshChannelQrSession]);
 
   const requestWhatsAppQr = async (force = false) => {
     setWhatsappQrLoading(true);
@@ -2701,6 +3257,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           const fields = CHANNEL_FIELDS[channelId] || [];
           const enabled = channelConfigs[channelId]?.enabled !== false;
           const runtimeStatus = channelRuntimeStatuses[channelId];
+          const qrStatus = channelId === "feishu" || channelId === "qqbot"
+            ? channelQrSessions[channelId]?.status
+            : undefined;
+          const qrBusy = qrStatus === "pending" || qrStatus === "saving" || qrStatus === "expired";
 
           return (
             <div key={channelId} className="space-y-4">
@@ -2714,12 +3274,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs font-semibold text-[var(--text-secondary)]">{t("Enable this channel")}</span>
-                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat && !qrBusy ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
                   <input
                     type="checkbox"
                     checked={enabled}
                     onChange={(event) => updateChannelField(channelId, "enabled", event.target.checked)}
-                    disabled={!canConfigureWechat}
+                    disabled={!canConfigureWechat || qrBusy}
                     className="sr-only peer"
                   />
                   <div className="w-9 h-5 rounded-full bg-[var(--bg-deep)] peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] peer-checked:bg-[var(--coral-bright)] peer-checked:after:translate-x-full after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all" />
@@ -2755,18 +3315,57 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     <button type="button" onClick={() => void refreshChannelRuntimeStatus("whatsapp")} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
                   </div>
                 </>
+              ) : channelId === "feishu" || channelId === "qqbot" ? (
+                <>
+                  <ChannelQrSetupPanel
+                    channel={channelId}
+                    enabled={enabled}
+                    disabled={!canConfigureWechat}
+                    loading={channelQrLoading[channelId] === true || channelSaving === channelId}
+                    session={channelQrSessions[channelId]}
+                    onStart={() => void requestChannelQr(channelId)}
+                    onCancel={() => void cancelChannelQr(channelId)}
+                    onSaveDisabled={() => void saveChatChannel(channelId)}
+                  />
+                  <ChannelStatusSummary channel={channelId} status={runtimeStatus} />
+                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
+
+                  <details className="border-t border-[var(--border-subtle)] pt-3">
+                    <summary className="cursor-pointer text-sm font-semibold text-[var(--text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--coral-bright)]">
+                      {t("I already have an app")}
+                    </summary>
+                    <div className="mt-4 space-y-4">
+                      <ChannelCredentialGuide channel={channelId} />
+                      {channelId === "feishu" && (
+                        <div>
+                          <p className={LABEL_CLASS}>{t("Platform")}</p>
+                          <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
+                            <button type="button" onClick={() => setFeishuDomain("feishu")} disabled={!canConfigureWechat || qrBusy} className={`rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-50 ${feishuDomain === "feishu" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Feishu")}</button>
+                            <button type="button" onClick={() => setFeishuDomain("lark")} disabled={!canConfigureWechat || qrBusy} className={`rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-50 ${feishuDomain === "lark" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Lark")}</button>
+                          </div>
+                        </div>
+                      )}
+                      {qrBusy && (
+                        <p className="text-xs leading-relaxed text-amber-300">
+                          {t("Cancel or finish QR setup before using manual configuration.")}
+                        </p>
+                      )}
+                      {fields.map((field) => (
+                        <div key={field.key}>
+                          <label className={LABEL_CLASS}>{t(field.label)}</label>
+                          <input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} autoComplete="off" spellCheck={false} disabled={!canConfigureWechat || qrBusy} className={INPUT_CLASS} />
+                        </div>
+                      ))}
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId || qrBusy} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("Saving...") : t("Save and connect")}</button>
+                        <button type="button" onClick={() => void refreshChannelRuntimeStatus(channelId)} className="rounded-lg border border-gray-600 px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
+                      </div>
+                    </div>
+                  </details>
+                </>
               ) : (
                 <>
                   <ChannelCredentialGuide channel={channelId} />
-                  {channelId === "feishu" && (
-                    <div>
-                      <p className={LABEL_CLASS}>{t("Platform")}</p>
-                      <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
-                        <button type="button" onClick={() => setFeishuDomain("feishu")} className={`rounded-md px-3 py-2 text-xs font-semibold ${feishuDomain === "feishu" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Feishu")}</button>
-                        <button type="button" onClick={() => setFeishuDomain("lark")} className={`rounded-md px-3 py-2 text-xs font-semibold ${feishuDomain === "lark" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Lark")}</button>
-                      </div>
-                    </div>
-                  )}
                   {fields.map((field) => (
                     <div key={field.key}>
                       <label className={LABEL_CLASS}>{t(field.label)}</label>

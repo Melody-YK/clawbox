@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { execFile } from "child_process";
+import { randomUUID } from "crypto";
 import { promisify } from "util";
 
 const exec = promisify(execFile);
@@ -14,6 +15,7 @@ const CONFIG_PATH =
 const WECHAT_CHANNEL_KEY = "openclaw-weixin";
 const LEGACY_WECHAT_CHANNEL_KEY = "wechat";
 const ILINK_BASE_URL = "https://ilinkai.weixin.qq.com";
+let configWriteQueue: Promise<void> = Promise.resolve();
 
 export interface OpenClawConfig {
   [key: string]: unknown;
@@ -37,15 +39,43 @@ export async function readConfig(): Promise<OpenClawConfig> {
   }
 }
 
-export async function writeConfig(config: OpenClawConfig): Promise<void> {
+async function writeConfigFile(config: OpenClawConfig): Promise<void> {
   await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
-  const tmpPath = CONFIG_PATH + ".tmp";
-  await fs.writeFile(tmpPath, JSON.stringify(config, null, 2), {
-    encoding: "utf-8",
-    mode: 0o600,
+  const tmpPath = `${CONFIG_PATH}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmpPath, JSON.stringify(config, null, 2), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    await fs.rename(tmpPath, CONFIG_PATH);
+    await fs.chmod(CONFIG_PATH, 0o600);
+  } finally {
+    await fs.rm(tmpPath, { force: true }).catch(() => {});
+  }
+}
+
+function serializeConfigWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const result = configWriteQueue.then(operation);
+  configWriteQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+export function writeConfig(config: OpenClawConfig): Promise<void> {
+  return serializeConfigWrite(() => writeConfigFile(config));
+}
+
+export function updateConfig<T>(
+  update: (config: OpenClawConfig) => T | Promise<T>,
+): Promise<T> {
+  return serializeConfigWrite(async () => {
+    const config = await readConfig();
+    const result = await update(config);
+    await writeConfigFile(config);
+    return result;
   });
-  await fs.rename(tmpPath, CONFIG_PATH);
-  await fs.chmod(CONFIG_PATH, 0o600);
 }
 
 
