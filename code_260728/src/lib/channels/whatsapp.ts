@@ -20,6 +20,7 @@ const STATUS_COMMAND_TIMEOUT_MS = 20_000;
 const QR_START_TIMEOUT_MS = 30_000;
 const QR_WAIT_TIMEOUT_MS = 15_000;
 const QR_DATA_URL_MAX_LENGTH = 16_384;
+const COMMAND_ERROR_MAX_LENGTH = 4_000;
 
 export const WHATSAPP_PLUGIN_ID = "whatsapp";
 export const WHATSAPP_STATUS_ARGS = [
@@ -98,6 +99,7 @@ export interface WhatsAppQrWaitResult {
 
 export interface WhatsAppChannelStatus extends WhatsAppConfigView {
   state: WhatsAppChannelState;
+  errorCode: WhatsAppErrorCode | null;
   pluginAvailable: boolean | null;
   linked: boolean;
   connected: boolean;
@@ -216,17 +218,32 @@ function clampTimeout(
 }
 
 export function sanitizeWhatsAppError(message: string): string {
-  return message.replace(
-    /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]+/gi,
-    "[redacted WhatsApp QR]",
-  );
+  const sanitized = message
+    .replace(
+      /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]+/gi,
+      "[redacted WhatsApp QR]",
+    )
+    .replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "")
+    .trim();
+  if (sanitized.length <= COMMAND_ERROR_MAX_LENGTH) return sanitized;
+  return `${sanitized.slice(0, COMMAND_ERROR_MAX_LENGTH)}...`;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof WhatsAppChannelError) return error.message;
   if (isRecord(error)) {
-    const stderr = readString(error.stderr);
-    if (stderr) return sanitizeWhatsAppError(stderr);
+    const output = [readString(error.stderr), readString(error.stdout)].filter(
+      (value): value is string => Boolean(value),
+    );
+    if (output.length > 0) return sanitizeWhatsAppError(output.join("\n"));
+
+    if (
+      error.killed === true ||
+      error.code === "ETIMEDOUT" ||
+      error.signal === "SIGTERM"
+    ) {
+      return "OpenClaw command was terminated before it returned a diagnostic response. Check the Gateway status and logs, then retry.";
+    }
   }
   return sanitizeWhatsAppError(error instanceof Error ? error.message : fallback);
 }
@@ -610,12 +627,15 @@ export async function startWhatsAppQrLogin(
     throw new WhatsAppChannelError("plugin_unavailable", message);
   }
   const qrDataUrl = readQrDataUrl(payload.qrDataUrl);
-  if (!qrDataUrl && payload.connected !== true && /^failed\b/i.test(message)) {
+  const connected =
+    payload.connected === true ||
+    /already linked|recovered the existing linked session/i.test(message);
+  if (!qrDataUrl && !connected) {
     throw new WhatsAppChannelError("qr_login_failed", message);
   }
 
   return {
-    connected: payload.connected === true,
+    connected,
     qrDataUrl,
     message,
   };
@@ -710,6 +730,7 @@ export function parseWhatsAppStatusPayload(
         ? "not_linked"
         : "disabled"
       : "not_configured",
+    errorCode: null,
     pluginAvailable: null,
     linked: false,
     connected: false,
@@ -729,6 +750,7 @@ export function parseWhatsAppStatusPayload(
     return {
       ...base,
       state: "error",
+      errorCode: "gateway_unavailable",
       lastError: "OpenClaw returned invalid WhatsApp channel status.",
     };
   }
@@ -736,6 +758,7 @@ export function parseWhatsAppStatusPayload(
     return {
       ...base,
       state: "error",
+      errorCode: "gateway_unavailable",
       lastError: sanitizeWhatsAppError(
         readString(payload.error) || "OpenClaw Gateway is not reachable.",
       ),
@@ -764,6 +787,7 @@ export function parseWhatsAppStatusPayload(
     return {
       ...base,
       state: "error",
+      errorCode: "plugin_unavailable",
       pluginAvailable: false,
       lastError:
         "The WhatsApp plugin is not available in the running OpenClaw Gateway. Prepare WhatsApp and restart Gateway.",

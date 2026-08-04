@@ -203,6 +203,7 @@ describe("WhatsApp config and prepare routes", () => {
 
     expect(response.status).toBe(503);
     expectNoStore(response);
+    expect(body.errorCode).toBe("plugin_unavailable");
     expect(body.error).toContain("unavailable");
   });
 
@@ -254,6 +255,25 @@ describe("WhatsApp QR and live status routes", () => {
     expect(response.status).toBe(200);
     expectNoStore(response);
     expect(body).toMatchObject({ linked: true, connected: true });
+  });
+
+  it("returns a structured Gateway error when QR generation cannot reach OpenClaw", async () => {
+    await writeSetupConfig({ ai_model_configured: true });
+    mocks.startQr.mockRejectedValue(
+      Object.assign(new Error("gateway closed (1006): abnormal closure"), {
+        code: "gateway_unavailable",
+      }),
+    );
+
+    const response = await qrPost(jsonRequest({ force: false }));
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expectNoStore(response);
+    expect(body).toMatchObject({
+      errorCode: "gateway_unavailable",
+      error: "gateway closed (1006): abnormal closure",
+    });
   });
 });
 

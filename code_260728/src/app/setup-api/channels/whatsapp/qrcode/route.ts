@@ -5,6 +5,7 @@ import {
 } from "@/lib/channels/whatsapp";
 import {
   noStoreJson,
+  whatsappErrorCode,
   whatsappErrorMessage,
   whatsappErrorStatus,
 } from "../response";
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return noStoreJson(
       {
+        errorCode: whatsappErrorCode(error),
         error: whatsappErrorMessage(
           error,
           "Failed to generate a WhatsApp QR code.",

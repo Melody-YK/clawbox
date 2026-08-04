@@ -67,6 +67,7 @@ interface DoneStepProps {
 interface SectionStatusMessage {
   type: "success" | "error";
   message: string;
+  detail?: string;
 }
 
 interface ChannelRuntimeStatus {
@@ -76,6 +77,7 @@ interface ChannelRuntimeStatus {
   connected?: boolean;
   linked?: boolean;
   running?: boolean;
+  errorCode?: string | null;
   lastError?: string | null;
   publicWebhookUrl?: string | null;
 }
@@ -196,6 +198,31 @@ const QR_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   gateway_restart_failed: "Credentials were saved, but OpenClaw could not reconnect the gateway.",
   channel_connect_failed: "Credentials were saved, but the channel did not come online.",
 };
+
+const WHATSAPP_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  gateway_unavailable:
+    "OpenClaw Gateway is unavailable. Check the network, DNS, proxy, and TLS settings on the device running Gateway, then retry.",
+  plugin_unavailable:
+    "The WhatsApp plugin is unavailable. Install or enable the matching OpenClaw WhatsApp plugin, restart Gateway, then retry.",
+  qr_login_failed:
+    "WhatsApp could not start linking. Confirm that the Gateway device can reach WhatsApp, then generate a new QR code.",
+  invalid_owner_number:
+    "Enter the owner number in international format, for example +8613800000000.",
+  request_timeout:
+    "The WhatsApp request took too long. Check the Gateway host network, then use Check status before retrying.",
+};
+
+const WHATSAPP_PREPARE_REQUEST_TIMEOUT_MS = 150_000;
+const WHATSAPP_QR_REQUEST_TIMEOUT_MS = 60_000;
+const WHATSAPP_LOGIN_STATUS_REQUEST_TIMEOUT_MS = 45_000;
+const CHANNEL_STATUS_REQUEST_TIMEOUT_MS = 30_000;
+
+class WhatsAppRequestTimeoutError extends Error {
+  constructor() {
+    super("The browser stopped waiting for the WhatsApp request. The device may still be finishing the operation in the background.");
+    this.name = "WhatsAppRequestTimeoutError";
+  }
+}
 
 const CHANNEL_COPY = {
   en: {
@@ -517,6 +544,71 @@ function channelQrErrorMessage(payload: unknown, fallback: string): string {
   return t(typeof payload.error === "string" && payload.error ? payload.error : fallback);
 }
 
+function whatsappFailureStatus(
+  payload: unknown,
+  fallback: string,
+): SectionStatusMessage {
+  const value = isRecord(payload) ? payload : {};
+  const errorCode = typeof value.errorCode === "string" ? value.errorCode : null;
+  const detail = typeof value.error === "string" && value.error.trim()
+    ? value.error.trim()
+    : null;
+  const message = t(
+    (errorCode && WHATSAPP_ERROR_MESSAGES[errorCode]) || fallback,
+  );
+
+  return {
+    type: "error",
+    message,
+    ...(detail && detail !== message ? { detail } : {}),
+  };
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const externalSignal = init.signal;
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw new WhatsAppRequestTimeoutError();
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+function isTerminalWhatsAppLoginMessage(message: string): boolean {
+  return /no active whatsapp login|login qr expired|login failed|login ended|logged out/i.test(
+    message,
+  );
+}
+
+function DiagnosticDetails({ detail }: { detail: string }) {
+  return (
+    <details className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
+      <summary className="cursor-pointer font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--coral-bright)]">
+        {t("Diagnostic details")}
+      </summary>
+      <code className="mt-1 block whitespace-pre-wrap break-all font-mono text-[10px] text-[var(--text-muted)]">
+        {detail}
+      </code>
+    </details>
+  );
+}
+
 function parseChannelQrSession(payload: unknown): ChannelQrSession | null {
   if (!isRecord(payload)) return null;
   const value = isRecord(payload.session) ? payload.session : payload;
@@ -597,11 +689,21 @@ function ChannelStatusSummary({
     : status.state === "error"
       ? "text-red-400"
       : "text-amber-400";
+  const friendlyErrorKey = channel === "whatsapp" && status.errorCode
+    ? WHATSAPP_ERROR_MESSAGES[status.errorCode]
+    : null;
+  const visibleError = friendlyErrorKey
+    ? t(friendlyErrorKey)
+    : status.lastError;
+  const diagnosticDetail = friendlyErrorKey && status.lastError && status.lastError !== visibleError
+    ? status.lastError
+    : null;
 
   return (
     <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-deep)]/50 px-3 py-2.5">
       <p className={`text-xs font-semibold ${color}`}>{label}</p>
-      {status.lastError && <p className="mt-1 break-words text-[11px] leading-relaxed text-red-300">{status.lastError}</p>}
+      {visibleError && <p className="mt-1 break-words text-[11px] leading-relaxed text-red-300">{visibleError}</p>}
+      {diagnosticDetail && <DiagnosticDetails detail={diagnosticDetail} />}
     </div>
   );
 }
@@ -1028,6 +1130,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [whatsappOwnerNumber, setWhatsappOwnerNumber] = useState("");
   const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState<string | null>(null);
   const [whatsappQrLoading, setWhatsappQrLoading] = useState(false);
+  const [whatsappQrPolling, setWhatsappQrPolling] = useState(false);
 
   /* ── WiFi ── */
   const [wifiDone, setWifiDone] = useState(false);
@@ -1191,16 +1294,69 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     channel: ConfigurableChatChannelId,
     signal?: AbortSignal,
   ) => {
+    if (channel !== "whatsapp") {
+      try {
+        const response = await fetch(CHANNEL_STATUS_PATHS[channel], {
+          signal,
+          cache: "no-store",
+        });
+        const data = (await response.json().catch(() => null)) as ChannelRuntimeStatus | null;
+        if (!data || signal?.aborted) return;
+        setChannelRuntimeStatuses((current) => ({ ...current, [channel]: data }));
+      } catch {
+        // Status probes are informational; saving a channel remains available.
+      }
+      return;
+    }
+
+    const requestController = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      requestController.abort();
+    }, CHANNEL_STATUS_REQUEST_TIMEOUT_MS);
+    const abortRequest = () => requestController.abort();
+    if (signal) {
+      if (signal.aborted) {
+        window.clearTimeout(timeout);
+        return;
+      }
+      signal.addEventListener("abort", abortRequest, { once: true });
+    }
     try {
       const response = await fetch(CHANNEL_STATUS_PATHS[channel], {
-        signal,
+        signal: requestController.signal,
         cache: "no-store",
       });
       const data = (await response.json().catch(() => null)) as ChannelRuntimeStatus | null;
       if (!data || signal?.aborted) return;
       setChannelRuntimeStatuses((current) => ({ ...current, [channel]: data }));
-    } catch {
-      // Status probes are informational; saving a channel remains available.
+    } catch (error) {
+      if (signal?.aborted) return;
+      if (timedOut) {
+        setChannelRuntimeStatuses((current) => ({
+          ...current,
+          whatsapp: {
+            state: "error",
+            connected: false,
+            errorCode: "gateway_unavailable",
+            lastError: "The WhatsApp status request timed out before OpenClaw Gateway responded.",
+          },
+        }));
+      } else {
+        setChannelRuntimeStatuses((current) => ({
+          ...current,
+          whatsapp: {
+            state: "error",
+            connected: false,
+            errorCode: "gateway_unavailable",
+            lastError: error instanceof Error ? error.message : "The WhatsApp status request failed.",
+          },
+        }));
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortRequest);
     }
   }, []);
 
@@ -1591,60 +1747,203 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   const requestWhatsAppQr = async (force = false) => {
     setWhatsappQrLoading(true);
+    setWhatsappQrPolling(false);
+    setWhatsappQrDataUrl(null);
     setChannelStatuses((current) => {
       const next = { ...current };
       delete next.whatsapp;
       return next;
     });
     try {
-      const response = await fetch("/setup-api/channels/whatsapp/qrcode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
-        cache: "no-store",
-      });
+      const response = await fetchWithTimeout(
+        "/setup-api/channels/whatsapp/qrcode",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force }),
+          cache: "no-store",
+        },
+        WHATSAPP_QR_REQUEST_TIMEOUT_MS,
+      );
       const data = (await response.json().catch(() => ({}))) as {
         connected?: boolean;
         qrDataUrl?: string | null;
         message?: string;
         error?: string;
+        errorCode?: string | null;
       };
       if (!response.ok) {
         setChannelStatuses((current) => ({
           ...current,
-          whatsapp: { type: "error", message: data.error || t("Unable to generate a WhatsApp QR code.") },
+          whatsapp: whatsappFailureStatus(
+            data,
+            "Unable to generate a WhatsApp QR code.",
+          ),
         }));
         return;
       }
       if (data.connected) {
         setWhatsappQrDataUrl(null);
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: {
+            type: "success",
+            message: t("WhatsApp is linked. Checking the live connection now."),
+          },
+        }));
         await refreshChannelRuntimeStatus("whatsapp");
         return;
       }
       if (!data.qrDataUrl) {
         setChannelStatuses((current) => ({
           ...current,
-          whatsapp: { type: "error", message: data.message || t("WhatsApp did not return a QR code.") },
+          whatsapp: whatsappFailureStatus(
+            { error: data.message },
+            "WhatsApp did not return a QR code.",
+          ),
         }));
         return;
       }
       setWhatsappQrDataUrl(data.qrDataUrl);
       setChannelStatuses((current) => ({
         ...current,
-        whatsapp: { type: "success", message: t("QR code is ready. Scan it from WhatsApp Linked devices, then check status.") },
+        whatsapp: {
+          type: "success",
+          message: t("QR code is ready. Scan it from WhatsApp Linked devices; this page will confirm the connection automatically."),
+        },
       }));
     } catch (error) {
+      const status = error instanceof WhatsAppRequestTimeoutError
+        ? whatsappFailureStatus(
+            { errorCode: "request_timeout", error: error.message },
+            "Unable to generate a WhatsApp QR code.",
+          )
+        : whatsappFailureStatus(
+            { error: error instanceof Error ? error.message : String(error) },
+            "Unable to generate a WhatsApp QR code.",
+          );
       setChannelStatuses((current) => ({
         ...current,
-        whatsapp: {
-          type: "error",
-          message: `${t("Unable to generate a WhatsApp QR code.")}: ${error instanceof Error ? error.message : error}`,
-        },
+        whatsapp: status,
       }));
     } finally {
       setWhatsappQrLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!whatsappQrDataUrl) {
+      setWhatsappQrPolling(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let retryTimer: number | null = null;
+    setWhatsappQrPolling(true);
+
+    const poll = async () => {
+      try {
+        const response = await fetchWithTimeout(
+          "/setup-api/channels/whatsapp/login-status",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              timeoutMs: 15_000,
+              currentQrDataUrl: whatsappQrDataUrl,
+            }),
+            cache: "no-store",
+            signal: controller.signal,
+          },
+          WHATSAPP_LOGIN_STATUS_REQUEST_TIMEOUT_MS,
+        );
+        const data = (await response.json().catch(() => ({}))) as {
+          connected?: boolean;
+          qrDataUrl?: string | null;
+          message?: string;
+          error?: string;
+          errorCode?: string | null;
+        };
+        if (controller.signal.aborted) return;
+
+        if (!response.ok) {
+          setWhatsappQrPolling(false);
+          setChannelStatuses((current) => ({
+            ...current,
+            whatsapp: whatsappFailureStatus(
+              data,
+              "Unable to check WhatsApp QR login status.",
+            ),
+          }));
+          return;
+        }
+
+        if (data.connected) {
+          setWhatsappQrPolling(false);
+          setWhatsappQrDataUrl(null);
+          setChannelStatuses((current) => ({
+            ...current,
+            whatsapp: {
+              type: "success",
+              message: t("WhatsApp is linked. Checking the live connection now."),
+            },
+          }));
+          await refreshChannelRuntimeStatus("whatsapp");
+          return;
+        }
+
+        if (data.qrDataUrl && data.qrDataUrl !== whatsappQrDataUrl) {
+          setWhatsappQrDataUrl(data.qrDataUrl);
+          setChannelStatuses((current) => ({
+            ...current,
+            whatsapp: {
+              type: "success",
+              message: t("The WhatsApp QR code was refreshed automatically. Scan the latest code."),
+            },
+          }));
+          return;
+        }
+
+        const message = typeof data.message === "string" ? data.message : "";
+        if (isTerminalWhatsAppLoginMessage(message)) {
+          setWhatsappQrPolling(false);
+          setWhatsappQrDataUrl(null);
+          setChannelStatuses((current) => ({
+            ...current,
+            whatsapp: whatsappFailureStatus(
+              { error: message },
+              "The WhatsApp QR session ended. Confirm the settings to generate a new QR code.",
+            ),
+          }));
+          return;
+        }
+
+        retryTimer = window.setTimeout(() => void poll(), 1_000);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const status = error instanceof WhatsAppRequestTimeoutError
+          ? whatsappFailureStatus(
+              { errorCode: "request_timeout", error: error.message },
+              "Unable to check WhatsApp QR login status.",
+            )
+          : whatsappFailureStatus(
+              { error: error instanceof Error ? error.message : String(error) },
+              "Unable to check WhatsApp QR login status.",
+            );
+        setWhatsappQrPolling(false);
+        setChannelStatuses((current) => ({
+          ...current,
+          whatsapp: status,
+        }));
+      }
+    };
+
+    void poll();
+    return () => {
+      controller.abort();
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [refreshChannelRuntimeStatus, whatsappQrDataUrl]);
 
   const prepareWhatsApp = async () => {
     if (!canConfigureWechat) {
@@ -1655,6 +1954,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       return;
     }
     const enabled = channelConfigs.whatsapp?.enabled !== false;
+    if (enabled && whatsappMode === "personal" && !whatsappOwnerNumber.trim()) {
+      setChannelStatuses((current) => ({
+        ...current,
+        whatsapp: whatsappFailureStatus(
+          { errorCode: "invalid_owner_number" },
+          "Unable to prepare WhatsApp.",
+        ),
+      }));
+      return;
+    }
     setChannelSaving("whatsapp");
     setChannelStatuses((current) => {
       const next = { ...current };
@@ -1662,16 +1971,23 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       return next;
     });
     try {
-      const response = await fetch("/setup-api/channels/whatsapp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled,
-          mode: whatsappMode,
-          ownerNumber: whatsappOwnerNumber.trim() || undefined,
-        }),
-        cache: "no-store",
-      });
+      const response = await fetchWithTimeout(
+        "/setup-api/channels/whatsapp",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled,
+            mode: whatsappMode,
+            ownerNumber:
+              whatsappMode === "personal"
+                ? whatsappOwnerNumber.trim() || undefined
+                : undefined,
+          }),
+          cache: "no-store",
+        },
+        WHATSAPP_PREPARE_REQUEST_TIMEOUT_MS,
+      );
       const data = (await response.json().catch(() => ({}))) as ChannelRuntimeStatus & {
         message?: string;
         error?: string;
@@ -1679,7 +1995,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (!response.ok) {
         setChannelStatuses((current) => ({
           ...current,
-          whatsapp: { type: "error", message: data.error || t("Unable to prepare WhatsApp.") },
+          whatsapp: whatsappFailureStatus(data, "Unable to prepare WhatsApp."),
         }));
         return;
       }
@@ -1698,12 +2014,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       }));
       await requestWhatsAppQr();
     } catch (error) {
+      const status = error instanceof WhatsAppRequestTimeoutError
+        ? whatsappFailureStatus(
+            { errorCode: "request_timeout", error: error.message },
+            "Unable to prepare WhatsApp.",
+          )
+        : whatsappFailureStatus(
+            { error: error instanceof Error ? error.message : String(error) },
+            "Unable to prepare WhatsApp.",
+          );
       setChannelStatuses((current) => ({
         ...current,
-        whatsapp: {
-          type: "error",
-          message: `${t("Unable to prepare WhatsApp.")}: ${error instanceof Error ? error.message : error}`,
-        },
+        whatsapp: status,
       }));
     } finally {
       setChannelSaving(null);
@@ -3261,6 +3583,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             ? channelQrSessions[channelId]?.status
             : undefined;
           const qrBusy = qrStatus === "pending" || qrStatus === "saving" || qrStatus === "expired";
+          const whatsappConfigurationLocked = channelId === "whatsapp"
+            && (channelSaving === "whatsapp" || whatsappQrLoading || whatsappQrPolling);
+          const channelConfigurationLocked = qrBusy || whatsappConfigurationLocked;
 
           return (
             <div key={channelId} className="space-y-4">
@@ -3274,12 +3599,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs font-semibold text-[var(--text-secondary)]">{t("Enable this channel")}</span>
-                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat && !qrBusy ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+                <label className={`relative inline-flex shrink-0 items-center ${canConfigureWechat && !channelConfigurationLocked ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
                   <input
                     type="checkbox"
                     checked={enabled}
                     onChange={(event) => updateChannelField(channelId, "enabled", event.target.checked)}
-                    disabled={!canConfigureWechat || qrBusy}
+                    disabled={!canConfigureWechat || channelConfigurationLocked}
                     className="sr-only peer"
                   />
                   <div className="w-9 h-5 rounded-full bg-[var(--bg-deep)] peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] peer-checked:bg-[var(--coral-bright)] peer-checked:after:translate-x-full after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all" />
@@ -3290,16 +3615,34 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 <>
                   <ChannelCredentialGuide channel="whatsapp" />
                   <div>
-                    <p className={LABEL_CLASS}>{t("WhatsApp account mode")}</p>
-                    <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
-                      <button type="button" onClick={() => setWhatsappMode("dedicated")} className={`rounded-md px-3 py-2 text-xs font-semibold ${whatsappMode === "dedicated" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Dedicated account")}</button>
-                      <button type="button" onClick={() => setWhatsappMode("personal")} className={`rounded-md px-3 py-2 text-xs font-semibold ${whatsappMode === "personal" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Personal account")}</button>
+                    <p id="whatsapp-account-mode-label" className={LABEL_CLASS}>{t("WhatsApp account mode")}</p>
+                    <div role="group" aria-labelledby="whatsapp-account-mode-label" aria-describedby={`whatsapp-account-mode-help ${whatsappMode === "dedicated" ? "whatsapp-dedicated-mode-help" : "whatsapp-owner-number-purpose"}`} className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--bg-deep)] p-1">
+                      <button type="button" aria-pressed={whatsappMode === "dedicated"} onClick={() => setWhatsappMode("dedicated")} disabled={whatsappConfigurationLocked} className={`rounded-md px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${whatsappMode === "dedicated" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Dedicated account")}</button>
+                      <button type="button" aria-pressed={whatsappMode === "personal"} onClick={() => setWhatsappMode("personal")} disabled={whatsappConfigurationLocked} className={`rounded-md px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${whatsappMode === "personal" ? "bg-[var(--coral-bright)] text-white" : "text-[var(--text-muted)]"}`}>{t("Personal account")}</button>
                     </div>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use a dedicated account for a shared assistant. A personal account can be linked for private use.")}</p>
+                    <p id="whatsapp-account-mode-help" className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Both account modes link WhatsApp by scanning a QR code.")}</p>
                   </div>
-                  <div>
-                    <label htmlFor="whatsapp-owner-number" className={LABEL_CLASS}>{t("Owner phone number (optional)")}</label>
-                    <input id="whatsapp-owner-number" value={whatsappOwnerNumber} onChange={(event) => setWhatsappOwnerNumber(event.target.value)} placeholder="+8613800000000" inputMode="tel" autoComplete="tel" disabled={!canConfigureWechat} className={INPUT_CLASS} />
+                  {whatsappMode === "dedicated" && (
+                    <div role="note" className="border-l-2 border-[var(--coral-bright)] bg-[var(--bg-deep)] px-3 py-2.5">
+                      <p id="whatsapp-dedicated-mode-help" className="text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use a separate WhatsApp number as the assistant account. This mode is recommended when multiple people use the assistant through separate direct chats; group chats remain disabled. After QR linking, an administrator must approve new users through OpenClaw pairing before they can message the assistant; no owner number is required.")}</p>
+                    </div>
+                  )}
+                  {whatsappMode === "personal" && (
+                    <div className="space-y-3">
+                      <div role="note" className="border-l-2 border-[var(--coral-bright)] bg-[var(--bg-deep)] px-3 py-2.5">
+                        <p id="whatsapp-owner-number-purpose" className="text-[11px] leading-relaxed text-[var(--text-muted)]">{t("The QR code signs in and links WhatsApp. In personal mode, OpenClaw adds this number to the message allowlist and enables self-chat so the owner can message the assistant directly.")}</p>
+                      </div>
+                      <div>
+                        <label htmlFor="whatsapp-owner-number" className={LABEL_CLASS}>{t("Your allowed WhatsApp number (required, international format)")}</label>
+                        <input id="whatsapp-owner-number" value={whatsappOwnerNumber} onChange={(event) => setWhatsappOwnerNumber(event.target.value)} placeholder="+8613800000000" inputMode="tel" autoComplete="tel" aria-describedby="whatsapp-owner-number-purpose whatsapp-owner-number-help" aria-required="true" required disabled={!canConfigureWechat || whatsappConfigurationLocked} className={INPUT_CLASS} />
+                        <p id="whatsapp-owner-number-help" className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use the number of the WhatsApp account you will link, including the country or region code, for example +8613800000000. It is not used to sign in or receive a verification code; an incorrect number may cause your messages to be rejected.")}</p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={prepareWhatsApp} aria-busy={channelSaving === "whatsapp" || whatsappQrLoading} disabled={!canConfigureWechat || whatsappConfigurationLocked} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{(channelSaving === "whatsapp" || whatsappQrLoading) && ButtonSpinner}{channelSaving === "whatsapp" || whatsappQrLoading ? t("Saving settings and generating QR code...") : enabled ? t("Confirm settings and generate QR code") : t("Save disabled state")}</button>
+                    {whatsappQrDataUrl && <button type="button" onClick={() => requestWhatsAppQr(true)} disabled={whatsappQrLoading} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:opacity-50">{t("Refresh QR code")}</button>}
+                    <button type="button" onClick={() => void refreshChannelRuntimeStatus("whatsapp")} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
                   </div>
                   {whatsappQrDataUrl && (
                     <div className="rounded-lg border border-gray-700 bg-[var(--bg-deep)] p-4">
@@ -3308,12 +3651,17 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     </div>
                   )}
                   <ChannelStatusSummary channel="whatsapp" status={runtimeStatus} />
-                  {channelStatuses.whatsapp && <StatusMessage type={channelStatuses.whatsapp.type} message={channelStatuses.whatsapp.message} />}
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={prepareWhatsApp} disabled={!canConfigureWechat || channelSaving === "whatsapp" || whatsappQrLoading} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{(channelSaving === "whatsapp" || whatsappQrLoading) && ButtonSpinner}{channelSaving === "whatsapp" || whatsappQrLoading ? t("Preparing...") : enabled ? t("Prepare and show QR code") : t("Save disabled state")}</button>
-                    {whatsappQrDataUrl && <button type="button" onClick={() => requestWhatsAppQr(true)} disabled={whatsappQrLoading} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:opacity-50">{t("Refresh QR code")}</button>}
-                    <button type="button" onClick={() => void refreshChannelRuntimeStatus("whatsapp")} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
-                  </div>
+                  {channelStatuses.whatsapp && (
+                    <>
+                      <StatusMessage type={channelStatuses.whatsapp.type} message={channelStatuses.whatsapp.message} />
+                      {channelStatuses.whatsapp.detail && <DiagnosticDetails detail={channelStatuses.whatsapp.detail} />}
+                    </>
+                  )}
+                  {whatsappQrPolling && (
+                    <p role="status" className="text-xs leading-relaxed text-[var(--text-muted)]">
+                      {t("Waiting for the scan. This page will detect the connection and refresh the QR code automatically.")}
+                    </p>
+                  )}
                 </>
               ) : channelId === "feishu" || channelId === "qqbot" ? (
                 <>

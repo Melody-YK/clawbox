@@ -274,6 +274,63 @@ describe("WhatsApp QR gateway RPC", () => {
       whatsapp.startWhatsAppQrLogin({}, runner),
     ).rejects.toMatchObject({ code: "plugin_unavailable" });
   });
+
+  it("keeps Gateway diagnostics written to stdout when the CLI exits with no stderr", async () => {
+    const runner = runnerMock(async () => {
+      throw Object.assign(new Error("Command failed: openclaw gateway call"), {
+        stdout: JSON.stringify({ error: "gateway closed (1006): abnormal closure" }),
+        stderr: "",
+      });
+    });
+
+    await expect(
+      whatsapp.startWhatsAppQrLogin({}, runner),
+    ).rejects.toMatchObject({
+      code: "gateway_unavailable",
+      message: expect.stringContaining("gateway closed (1006)"),
+    });
+  });
+
+  it("treats an existing linked session as connected when OpenClaw omits the flag", async () => {
+    const runner = runnerMock(async () => ({
+      stdout: JSON.stringify({
+        message: "WhatsApp is already linked (+8613800000000). Say relink for a fresh QR.",
+      }),
+    }));
+
+    await expect(whatsapp.startWhatsAppQrLogin({}, runner)).resolves.toEqual({
+      connected: true,
+      qrDataUrl: null,
+      message: "WhatsApp is already linked (+8613800000000). Say relink for a fresh QR.",
+    });
+  });
+
+  it("rejects a QR start response that has neither a QR image nor a linked session", async () => {
+    const runner = runnerMock(async () => ({
+      stdout: JSON.stringify({
+        message: "WhatsApp auth state is still stabilizing. Retry login in a moment.",
+      }),
+    }));
+
+    await expect(whatsapp.startWhatsAppQrLogin({}, runner)).rejects.toMatchObject({
+      code: "qr_login_failed",
+      message: "WhatsApp auth state is still stabilizing. Retry login in a moment.",
+    });
+  });
+});
+
+describe("WhatsApp diagnostic formatting", () => {
+  it("redacts QR data, removes terminal escapes, and caps diagnostic length", () => {
+    const qr = "data:image/png;base64,QUJDRA==";
+    const sanitized = whatsapp.sanitizeWhatsAppError(
+      `\u001b[31mfailed ${qr}\u001b[0m ${"x".repeat(5_000)}`,
+    );
+
+    expect(sanitized).toContain("[redacted WhatsApp QR]");
+    expect(sanitized).not.toContain(qr);
+    expect(sanitized).not.toContain("\u001b[");
+    expect(sanitized.length).toBeLessThanOrEqual(4_003);
+  });
 });
 
 describe("WhatsApp status, pairing, and logout", () => {
@@ -331,8 +388,26 @@ describe("WhatsApp status, pairing, and logout", () => {
 
     expect(status).toMatchObject({
       state: "error",
+      errorCode: "plugin_unavailable",
       pluginAvailable: false,
       connected: false,
+    });
+  });
+
+  it("marks a config-only status response as a Gateway network failure", () => {
+    const status = whatsapp.parseWhatsAppStatusPayload(
+      {
+        gatewayReachable: false,
+        configOnly: true,
+        error: "gateway closed (1006): abnormal closure",
+      },
+      stored,
+    );
+
+    expect(status).toMatchObject({
+      state: "error",
+      errorCode: "gateway_unavailable",
+      lastError: "gateway closed (1006): abnormal closure",
     });
   });
 
