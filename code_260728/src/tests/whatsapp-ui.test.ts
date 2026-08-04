@@ -13,10 +13,12 @@ describe("WhatsApp setup UI", () => {
     expect(source).toContain('t("Both account modes link WhatsApp by scanning a QR code.")');
     expect(source).toContain('whatsappMode === "dedicated"');
     expect(source).toContain('id="whatsapp-dedicated-mode-help"');
-    expect(source).toContain("Use a separate WhatsApp number as the assistant account.");
-    expect(source).toContain("through separate direct chats; group chats remain disabled");
-    expect(source).toContain("an administrator must approve new users through OpenClaw pairing");
-    expect(source).toContain("no owner number is required");
+    expect(source).toContain("instead of the owner's personal account");
+    expect(source).toContain("multiple people to contact the assistant through separate direct chats");
+    expect(source).toContain("each new user receives a pairing code with their first message");
+    expect(source).toContain("an administrator must approve that code in OpenClaw");
+    expect(source).toContain("No owner number is required");
+    expect(source).not.toContain("group chats remain disabled");
     expect(source).toContain('t("Your allowed WhatsApp number (required, international format)")');
     expect(source).not.toContain('t("Why this number is required")');
     expect(source).not.toContain("whatsapp-owner-number-purpose-title");
@@ -27,7 +29,7 @@ describe("WhatsApp setup UI", () => {
     expect(source).toContain('aria-describedby="whatsapp-owner-number-purpose whatsapp-owner-number-help"');
     expect(source).toContain('aria-required="true"');
     expect(source).toContain("const whatsappConfigurationLocked =");
-    expect(source).toContain('&& (channelSaving === "whatsapp" || whatsappQrLoading || whatsappQrPolling)');
+    expect(source).toContain('|| Boolean(whatsappQrDataUrl))');
     expect(source).toContain('disabled={whatsappConfigurationLocked}');
     expect(source).toContain('disabled={!canConfigureWechat || whatsappConfigurationLocked}');
 
@@ -79,7 +81,7 @@ describe("WhatsApp setup UI", () => {
       "Confirm settings and generate QR code",
       "Saving settings and generating QR code...",
       "Both account modes link WhatsApp by scanning a QR code.",
-      "Use a separate WhatsApp number as the assistant account. This mode is recommended when multiple people use the assistant through separate direct chats; group chats remain disabled. After QR linking, an administrator must approve new users through OpenClaw pairing before they can message the assistant; no owner number is required.",
+      "Use a separate WhatsApp number as the assistant account instead of the owner's personal account. This mode is intended for multiple people to contact the assistant through separate direct chats. After QR linking, each new user receives a pairing code with their first message; an administrator must approve that code in OpenClaw before the assistant handles their messages. No owner number is required.",
       "Your allowed WhatsApp number (required, international format)",
       "The QR code signs in and links WhatsApp. In personal mode, OpenClaw adds this number to the message allowlist and enables self-chat so the owner can message the assistant directly.",
       "Use the number of the WhatsApp account you will link, including the country or region code, for example +8613800000000. It is not used to sign in or receive a verification code; an incorrect number may cause your messages to be rejected.",

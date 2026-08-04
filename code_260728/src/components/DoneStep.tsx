@@ -3584,7 +3584,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             : undefined;
           const qrBusy = qrStatus === "pending" || qrStatus === "saving" || qrStatus === "expired";
           const whatsappConfigurationLocked = channelId === "whatsapp"
-            && (channelSaving === "whatsapp" || whatsappQrLoading || whatsappQrPolling);
+            && (channelSaving === "whatsapp" || whatsappQrLoading || whatsappQrPolling || Boolean(whatsappQrDataUrl));
           const channelConfigurationLocked = qrBusy || whatsappConfigurationLocked;
 
           return (
@@ -3624,7 +3624,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                   </div>
                   {whatsappMode === "dedicated" && (
                     <div role="note" className="border-l-2 border-[var(--coral-bright)] bg-[var(--bg-deep)] px-3 py-2.5">
-                      <p id="whatsapp-dedicated-mode-help" className="text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use a separate WhatsApp number as the assistant account. This mode is recommended when multiple people use the assistant through separate direct chats; group chats remain disabled. After QR linking, an administrator must approve new users through OpenClaw pairing before they can message the assistant; no owner number is required.")}</p>
+                      <p id="whatsapp-dedicated-mode-help" className="text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Use a separate WhatsApp number as the assistant account instead of the owner's personal account. This mode is intended for multiple people to contact the assistant through separate direct chats. After QR linking, each new user receives a pairing code with their first message; an administrator must approve that code in OpenClaw before the assistant handles their messages. No owner number is required.")}</p>
                     </div>
                   )}
                   {whatsappMode === "personal" && (
