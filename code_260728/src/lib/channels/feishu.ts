@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
 import { readConfig, updateConfig } from "@/lib/openclaw-config";
+import { getChannelStatusJson } from "./channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/clawbox/.npm-global/bin/openclaw";
@@ -210,7 +211,7 @@ export function parseFeishuStatusPayload(payload: unknown, stored: FeishuConfigV
 export async function probeFeishuChannel(): Promise<FeishuChannelStatus> {
   const stored = await getFeishuConfig();
   if (!stored.configured || !stored.enabled) return parseFeishuStatusPayload(null, stored);
-  const { stdout } = await runOpenClaw(["channels", "status", "--probe", "--timeout", "8000", "--json"]);
+  const stdout = await getChannelStatusJson();
   try {
     return parseFeishuStatusPayload(JSON.parse(stdout), stored);
   } catch {

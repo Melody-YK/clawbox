@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
 import { readConfig, restartGateway, writeConfig } from "@/lib/openclaw-config";
+import { getChannelStatusJson } from "./channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN =
@@ -860,7 +861,9 @@ export async function probeWhatsAppChannel(
 
   let result: OpenClawCommandResult;
   try {
-    result = await runner(WHATSAPP_STATUS_ARGS, STATUS_COMMAND_TIMEOUT_MS);
+    result = runner === runOpenClaw
+      ? { stdout: await getChannelStatusJson() }
+      : await runner(WHATSAPP_STATUS_ARGS, STATUS_COMMAND_TIMEOUT_MS);
   } catch (error) {
     const message = errorMessage(error, "OpenClaw channel status failed.");
     throw new WhatsAppChannelError(

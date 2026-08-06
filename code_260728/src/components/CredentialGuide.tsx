@@ -12,7 +12,7 @@ export default function CredentialGuide({
   title,
   steps,
   securityNote,
-  securityLabel = "Keep credentials private:",
+  securityLabel,
 }: CredentialGuideProps) {
   const { t } = useI18n();
   return (
@@ -27,7 +27,7 @@ export default function CredentialGuide({
           ))}
         </ol>
         <p className="mt-3 min-w-0 break-words border-l-2 border-amber-400/50 pl-2.5 text-xs leading-relaxed text-amber-300">
-          <strong>{securityLabel || t("Keep credentials private:")}</strong> {securityNote}
+          <strong>{securityLabel ?? t("Keep credentials private:")}</strong> {securityNote}
         </p>
       </div>
     </details>

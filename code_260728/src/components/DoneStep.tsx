@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import type { StepStatus, UpdateState } from "@/lib/updater";
 import StatusMessage from "./StatusMessage";
 import CredentialGuide from "./CredentialGuide";
+import ChannelSetupExtras, { type AdditionalChannelId } from "./ChannelSetupExtras";
 import { getLocale, t } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
@@ -143,8 +144,8 @@ const AI_PROVIDERS = [
   { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hint: "Get your API key from platform.deepseek.com", tokenUrl: "https://platform.deepseek.com/api_keys" },
 ] as const;
 
-type ChatChannelId = "wechat" | "feishu" | "qqbot" | "telegram" | "whatsapp" | "line";
-type ConfigurableChatChannelId = Exclude<ChatChannelId, "wechat">;
+type ConfigurableChatChannelId = "feishu" | "qqbot" | "telegram" | "whatsapp" | "line";
+type ChatChannelId = "wechat" | ConfigurableChatChannelId | AdditionalChannelId;
 
 const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string; description: string }[] = [
   { id: "wechat", tag: "WX", name: "WeChat", description: "Sign in to a Tencent iLink bot with a QR code; direct messages only." },
@@ -153,6 +154,11 @@ const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string
   { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Create or connect a Feishu / Lark bot by scanning a QR code." },
   { id: "line", tag: "LN", name: "LINE", description: "Connect a LINE Messaging API bot through a public HTTPS webhook." },
   { id: "qqbot", tag: "QQ", name: "QQ Bot", description: "Create or connect an official QQ bot by scanning a QR code." },
+  { id: "discord", tag: "DC", name: "Discord", description: "Connect a Discord bot with a Bot Token and optional server allowlist." },
+  { id: "zalo", tag: "ZB", name: "Zalo Bot", description: "Connect an official Zalo Bot Platform bot with its Bot Token." },
+  { id: "zalo-clawbot", tag: "ZC", name: "Zalo ClawBot", description: "Create an owner-bound Zalo bot through the official Mini App QR flow." },
+  { id: "zalouser", tag: "ZP", name: "Zalo Personal", description: "Link a personal Zalo account by QR code after accepting the account risk." },
+  { id: "signal", tag: "SG", name: "Signal", description: "Link Signal through signal-cli and a device-linking QR code." },
 ];
 
 const CHANNEL_STATUS_PATHS: Record<ConfigurableChatChannelId, string> = {
@@ -170,6 +176,26 @@ const CONFIGURABLE_CHAT_CHANNELS: readonly ConfigurableChatChannelId[] = [
   "line",
   "qqbot",
 ];
+
+const ADDITIONAL_CHAT_CHANNELS: readonly AdditionalChannelId[] = [
+  "discord",
+  "zalo",
+  "zalo-clawbot",
+  "zalouser",
+  "signal",
+];
+
+const ADDITIONAL_CHANNEL_STATUS_PATHS: Record<AdditionalChannelId, string> = {
+  discord: "/setup-api/channels/discord/status",
+  zalo: "/setup-api/channels/zalo/status",
+  "zalo-clawbot": "/setup-api/channels/zalo-clawbot",
+  zalouser: "/setup-api/channels/zalouser",
+  signal: "/setup-api/channels/signal/status",
+};
+
+function isAdditionalChatChannel(channel: ChatChannelId): channel is AdditionalChannelId {
+  return ADDITIONAL_CHAT_CHANNELS.includes(channel as AdditionalChannelId);
+}
 
 const AUTO_QR_CHANNELS: readonly AutoQrChannelId[] = ["feishu", "qqbot"];
 
@@ -513,6 +539,16 @@ function UpdateProgressHeading({ phase }: { phase: UpdateState["phase"] | undefi
 function isChannelOnline(channel: ChatChannelId, status: ChannelRuntimeStatus | undefined): boolean {
   if (channel === "line") return status?.state === "active";
   return status?.connected === true;
+}
+
+function isAdditionalChannelComplete(
+  channel: AdditionalChannelId,
+  status: ChannelRuntimeStatus | undefined,
+): boolean {
+  if (channel === "zalo-clawbot" || channel === "zalouser") {
+    return status?.configured === true && status.enabled !== false;
+  }
+  return isChannelOnline(channel, status);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1114,6 +1150,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [channelSaving, setChannelSaving] = useState<ConfigurableChatChannelId | null>(null);
   const [channelStatuses, setChannelStatuses] = useState<Record<string, SectionStatusMessage>>({});
   const [channelRuntimeStatuses, setChannelRuntimeStatuses] = useState<Partial<Record<ConfigurableChatChannelId, ChannelRuntimeStatus>>>({});
+  const [additionalChannelStatuses, setAdditionalChannelStatuses] = useState<Partial<Record<AdditionalChannelId, ChannelRuntimeStatus>>>({});
   const [channelQrSessions, setChannelQrSessions] = useState<Partial<Record<AutoQrChannelId, ChannelQrSession>>>({});
   const [channelQrLoading, setChannelQrLoading] = useState<Partial<Record<AutoQrChannelId, boolean>>>({});
   const channelQrSessionsRef = useRef<Partial<Record<AutoQrChannelId, ChannelQrSession>>>({});
@@ -1156,6 +1193,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const canConfigureWechat = providerDone;
   const chatChannelsDone = wechatDone || CONFIGURABLE_CHAT_CHANNELS.some((channel) =>
     isChannelOnline(channel, channelRuntimeStatuses[channel]),
+  ) || ADDITIONAL_CHAT_CHANNELS.some((channel) =>
+    isAdditionalChannelComplete(channel, additionalChannelStatuses[channel]),
   );
   const activeChatChannelMeta = CHAT_CHANNEL_META.find((channel) => channel.id === activeChatChannel)!;
   const canFinishSetup = wifiDone && providerDone;
@@ -1364,11 +1403,43 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     await Promise.all(CONFIGURABLE_CHAT_CHANNELS.map((channel) => refreshChannelRuntimeStatus(channel, signal)));
   }, [refreshChannelRuntimeStatus]);
 
+  const refreshAllAdditionalChannelStatuses = useCallback(async (signal?: AbortSignal) => {
+    await Promise.all(ADDITIONAL_CHAT_CHANNELS.map(async (channel) => {
+      try {
+        const response = await fetch(ADDITIONAL_CHANNEL_STATUS_PATHS[channel], {
+          signal,
+          cache: "no-store",
+        });
+        const data = (await response.json().catch(() => null)) as ChannelRuntimeStatus | null;
+        if (!response.ok || !data || signal?.aborted) return;
+        setAdditionalChannelStatuses((current) => ({ ...current, [channel]: data }));
+      } catch {
+        // Completion status is informational; the selected channel remains configurable.
+      }
+    }));
+  }, []);
+
+  const handleAdditionalChannelCompletion = useCallback((
+    channel: AdditionalChannelId,
+    complete: boolean,
+  ) => {
+    setAdditionalChannelStatuses((current) => {
+      if (isAdditionalChannelComplete(channel, current[channel]) === complete) return current;
+      return {
+        ...current,
+        [channel]: channel === "zalo-clawbot" || channel === "zalouser"
+          ? { configured: complete, enabled: complete }
+          : { connected: complete, state: complete ? "connected" : "not_configured" },
+      };
+    });
+  }, []);
+
   /* ── Fetch WeChat config on mount ── */
   useEffect(() => {
     const controller = new AbortController();
     refreshWechatState(controller.signal).catch(() => {});
     void refreshAllChannelRuntimeStatuses(controller.signal);
+    void refreshAllAdditionalChannelStatuses(controller.signal);
     fetch("/setup-api/channels/whatsapp", { signal: controller.signal, cache: "no-store" })
       .then((response) => response.ok ? response.json() : null)
       .then((data: { mode?: unknown; ownerNumber?: unknown; enabled?: unknown } | null) => {
@@ -1387,9 +1458,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [refreshAllChannelRuntimeStatuses, refreshWechatState]);
+  }, [refreshAllAdditionalChannelStatuses, refreshAllChannelRuntimeStatuses, refreshWechatState]);
 
-  const updateChannelField = (channel: ChatChannelId, field: string, value: string | boolean) => {
+  const updateChannelField = (channel: ConfigurableChatChannelId, field: string, value: string | boolean) => {
     setChannelConfigs((current) => ({ ...current, [channel]: { ...(current[channel] || {}), [field]: value } }));
   };
 
@@ -3741,6 +3812,19 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             </div>
           );
         })}
+
+        {isAdditionalChatChannel(activeChatChannel) && (
+          <div className="min-w-0 space-y-4">
+            <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+              {t(activeChatChannelMeta.description)}
+            </p>
+            <ChannelSetupExtras
+              canConfigure={canConfigureWechat}
+              activeChannel={activeChatChannel}
+              onCompletionChange={handleAdditionalChannelCompletion}
+            />
+          </div>
+        )}
         </CollapsibleSection>
 
         {/* WiFi — change network / re-provision */}

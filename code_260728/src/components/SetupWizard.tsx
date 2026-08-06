@@ -7,7 +7,7 @@ import ProgressBar from "./ProgressBar";
 import WifiStep from "./WifiStep";
 import DoneStep from "./DoneStep";
 import LanguageSelector from "./LanguageSelector";
-import { resolveSetupFlowState } from "@/lib/setup-flow";
+import { isLocalChannelPreview, resolveSetupFlowState } from "@/lib/setup-flow";
 import { t, tf } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
@@ -26,6 +26,7 @@ export default function SetupWizard() {
   void locale;
   const [currentStep, setCurrentStep] = useState(1);
   const [setupComplete, setSetupComplete] = useState(false);
+  const [localChannelPreview, setLocalChannelPreview] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [wifiStatusHint, setWifiStatusHint] = useState<{
@@ -37,6 +38,10 @@ export default function SetupWizard() {
     connected?: boolean;
   } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    setLocalChannelPreview(isLocalChannelPreview(window.location));
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -124,6 +129,8 @@ export default function SetupWizard() {
     };
   }, [retryCount]);
 
+  const visibleStep = localChannelPreview ? 2 : currentStep;
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -171,7 +178,7 @@ export default function SetupWizard() {
           </div>
         </Link>
         <div className="flex items-center gap-3">
-          {currentStep < 2 && <ProgressBar currentStep={currentStep} />}
+          {visibleStep < 2 && <ProgressBar currentStep={visibleStep} />}
           <LanguageSelector />
         </div>
       </header>
@@ -179,8 +186,8 @@ export default function SetupWizard() {
       <main
         className="flex-1 flex flex-col items-center justify-start sm:justify-center px-4 pt-2 pb-4 sm:p-6"
       >
-        {currentStep === 1 && <WifiStep externalStatus={wifiStatusHint} />}
-        {currentStep === 2 && <DoneStep setupComplete={setupComplete} />}
+        {visibleStep === 1 && <WifiStep externalStatus={wifiStatusHint} />}
+        {visibleStep === 2 && <DoneStep setupComplete={setupComplete} />}
       </main>
 
       <footer className="px-4 py-3 flex items-center justify-center gap-3">

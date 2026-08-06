@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
 import { readConfig, writeConfig } from "@/lib/openclaw-config";
+import { getChannelStatusJson } from "./channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN =
@@ -447,7 +448,7 @@ export async function probeLineChannel(): Promise<LineChannelStatus> {
     credentials.channelAccessToken,
     credentials.channelSecret,
   ].filter((value): value is string => Boolean(value));
-  const { stdout } = await runOpenClaw([...LINE_STATUS_ARGS]);
+  const stdout = await getChannelStatusJson();
   try {
     return parseLineStatusPayload(JSON.parse(stdout), stored, sensitiveValues);
   } catch {

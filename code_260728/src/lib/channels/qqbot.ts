@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
 import { readConfig, updateConfig } from "@/lib/openclaw-config";
+import { getChannelStatusJson } from "./channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/clawbox/.npm-global/bin/openclaw";
@@ -267,13 +268,7 @@ export async function probeQQBotChannel(): Promise<QQBotChannelStatus> {
   if (!stored.configured || !stored.enabled) {
     return parseQQBotStatusPayload(null, stored);
   }
-  const { stdout } = await runOpenClaw([
-    "channels",
-    "status",
-    "--timeout",
-    "8000",
-    "--json",
-  ]);
+  const stdout = await getChannelStatusJson();
   try {
     return parseQQBotStatusPayload(JSON.parse(stdout), stored);
   } catch {

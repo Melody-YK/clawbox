@@ -1,5 +1,5 @@
 // 复用 openclaw-config.ts 已有的读写和重启函数，保持行为与微信完全一致
-import { readConfig, writeConfig, restartGateway } from "./openclaw-config";
+import { readConfig, restartGateway, updateConfig } from "./openclaw-config";
 
 /* ── 渠道定义 ── */
 
@@ -34,18 +34,25 @@ const SECRET_FIELDS: Record<ManagedChannel, string[]> = {
   line:     ["channelAccessToken", "channelSecret"],
 };
 
+type ChannelRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is ChannelRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /* ── GET 用：读出 channels 段并脱敏 ── */
 
-export async function getChannelsConfig(): Promise<Record<string, Record<string, any>>> {
+export async function getChannelsConfig(): Promise<Record<string, ChannelRecord>> {
   const config = await readConfig();
-  const stored = config.channels ?? {};
+  const stored = isRecord(config.channels) ? config.channels : {};
 
-  const channels: Record<string, Record<string, any>> = {};
+  const channels: Record<string, ChannelRecord> = {};
   for (const channel of MANAGED_CHANNELS) {
-    const existing = stored[CHANNEL_CONFIG_KEY[channel]] as Record<string, any> | undefined;
+    const rawExisting = stored[CHANNEL_CONFIG_KEY[channel]];
+    const existing = isRecord(rawExisting) ? rawExisting : null;
     if (!existing || typeof existing !== "object") continue; // 没配置过的渠道不返回
 
-    const view: Record<string, any> = {};
+    const view: ChannelRecord = {};
     for (const key of FIELD_WHITELIST[channel]) {
       if (!(key in existing)) continue;
       if (SECRET_FIELDS[channel].includes(key)) {
@@ -65,14 +72,12 @@ export async function getChannelsConfig(): Promise<Record<string, Record<string,
 export async function setChannelConfig(
   channel: ManagedChannel,
   incoming: Record<string, unknown>,
-): Promise<Record<string, any>> {
-  const config = await readConfig();
-  if (!config.channels) {
-    config.channels = {};
-  }
-  const configKey = CHANNEL_CONFIG_KEY[channel];
-  const existing = (config.channels[configKey] ?? {}) as Record<string, any>;
-  const merged: Record<string, any> = { ...existing };
+): Promise<ChannelRecord> {
+  const updated = await updateConfig((config) => {
+    const channels = isRecord(config.channels) ? { ...config.channels } : {};
+    const configKey = CHANNEL_CONFIG_KEY[channel];
+    const existing = isRecord(channels[configKey]) ? channels[configKey] : {};
+    const merged: ChannelRecord = { ...existing };
 
   for (const key of FIELD_WHITELIST[channel]) {
     if (!(key in incoming)) continue; // 前端没传的字段不动
@@ -95,8 +100,10 @@ export async function setChannelConfig(
   if (channel === "feishu" && merged.connectionMode === "app") {
     merged.connectionMode = "websocket";
   }
-  config.channels[configKey] = merged as NonNullable<typeof config.channels>[string];
-  await writeConfig(config);
-  await restartGateway(); // 复用 openclaw-config 的 best-effort 重启，不会抛错
-  return merged;
+    channels[configKey] = merged;
+    config.channels = channels;
+    return merged;
+  });
+  await restartGateway();
+  return updated;
 }

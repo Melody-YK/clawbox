@@ -10,6 +10,14 @@ export interface SetupFlowState {
   setupComplete: boolean;
 }
 
+export function isLocalChannelPreview(
+  location: Pick<Location, "hostname" | "search">,
+): boolean {
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+  if (!localHosts.has(location.hostname)) return false;
+  return new URLSearchParams(location.search).get("preview") === "channels";
+}
+
 export function resolveSetupFlowState(
   data: SetupFlowStatus,
 ): SetupFlowState {

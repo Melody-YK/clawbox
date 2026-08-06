@@ -3,6 +3,7 @@ import path from "path";
 import { execFile } from "child_process";
 import { randomUUID } from "crypto";
 import { promisify } from "util";
+import { invalidateChannelStatusCache } from "@/lib/channels/channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_STATE_DIR =
@@ -49,6 +50,7 @@ async function writeConfigFile(config: OpenClawConfig): Promise<void> {
     });
     await fs.rename(tmpPath, CONFIG_PATH);
     await fs.chmod(CONFIG_PATH, 0o600);
+    invalidateChannelStatusCache();
   } finally {
     await fs.rm(tmpPath, { force: true }).catch(() => {});
   }

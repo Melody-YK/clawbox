@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { promisify } from "util";
 import { readConfig, writeConfig } from "@/lib/openclaw-config";
+import { getChannelStatusJson } from "./channel-status-cache";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN =
@@ -334,7 +335,7 @@ export async function probeTelegramChannel(): Promise<TelegramChannelStatus> {
     return parseTelegramStatusPayload(null, stored);
   }
 
-  const { stdout } = await runOpenClaw([...TELEGRAM_STATUS_ARGS]);
+  const stdout = await getChannelStatusJson();
 
   let payload: unknown;
   try {
