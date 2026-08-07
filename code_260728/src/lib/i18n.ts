@@ -1,4 +1,4 @@
-import { LocaleCode } from "@/i18n.config";
+import { i18n, type LocaleCode } from "@/i18n.config";
 
 const translations: Record<LocaleCode, Record<string, string>> = {
   "en": {
@@ -303,37 +303,27 @@ export function getLocale(): LocaleCode {
   if (typeof window === "undefined") {
     return "en";
   }
-  const stored = localStorage.getItem("locale") as LocaleCode | null;
-  if (stored && translations[stored]) {
-    return stored;
+  let storedLocale: string | null = null;
+  try {
+    storedLocale = localStorage.getItem("locale");
+  } catch {
+    // Continue with the browser preference when storage is unavailable.
   }
-  const browserLocale = navigator.language;
-  const matched = Object.keys(translations).find(
-    (key) => key === browserLocale || key.startsWith(browserLocale.split("-")[0])
-  ) as LocaleCode | undefined;
-  return matched || "en";
+  return resolveLocale(storedLocale, [navigator.language, ...navigator.languages]);
 }
 
 export function t(key: string): string {
-  const locale = getLocale();
-  return wifiMessages[locale]?.[key]
-    || translations[locale]?.[key]
-    || (locale === "zh-CN" ? ZH_CN_MESSAGES[key] : undefined)
-    || EN_MESSAGES[key]
-    || wifiMessages.en[key]
-    || translations.en[key]
-    || key;
+  return getLocalizedMessage(getLocale(), key) ?? key;
 }
 
 export function tf(key: string, values: Record<string, string>): string {
   return t(key).replace(/\{(\w+)\}/g, (_, name: string) => values[name] ?? `{${name}}`);
 }
 
-// The setup UI uses a small reactive surface for the two supported dashboard
-// locales. Keep the legacy key-based helpers above for the WiFi wizard while
-// exposing typed helpers for components that must re-render without a reload.
-export const LOCALES = ["en", "zh-CN"] as const;
-export type Locale = (typeof LOCALES)[number];
+// Keep the legacy key-based helpers above while exposing the full locale set to
+// components that must re-render without a reload.
+export const LOCALES: readonly LocaleCode[] = i18n.locales.map(({ code }) => code);
+export type Locale = LocaleCode;
 export const DEFAULT_LOCALE: Locale = "en";
 export const LOCALE_STORAGE_KEY = "locale";
 export type MessageKey = string;
@@ -621,6 +611,66 @@ const EN_MESSAGES: Record<string, string> = {
   "WhatsApp step 3": "Choose an account mode before generating the QR code. Dedicated mode is for shared use and requires administrator pairing approval for new users; personal mode uses the owner number only for the allowlist and self-chat. Both modes sign in by QR code.",
 };
 
+const dashboardMessages: Partial<Record<LocaleCode, Record<string, string>>> = {
+  "zh-TW": {
+    open_dashboard: "開啟控制面板", system_update: "系統更新", beta_update: "測試版更新", factory_reset: "恢復原廠設定", ai_model_cloud: "AI 模型（雲端 API）", wechat_bot: "微信機器人", security_hotspot: "安全與熱點", status_done: "已完成", status_pending: "待完成", access: "存取位址", memory: "記憶體", storage: "儲存空間", temperature: "溫度", cpu_timeline: "CPU 趨勢",
+  },
+  ja: {
+    open_dashboard: "ダッシュボードを開く", system_update: "システム更新", beta_update: "ベータ更新", factory_reset: "初期化", ai_model_cloud: "AIモデル（クラウドAPI）", wechat_bot: "WeChatボット", security_hotspot: "セキュリティとホットスポット", status_done: "完了", status_pending: "保留", access: "アクセス", memory: "メモリ", storage: "ストレージ", temperature: "温度", cpu_timeline: "CPU推移",
+  },
+  es: {
+    open_dashboard: "Abrir panel", system_update: "Actualizar sistema", beta_update: "Actualización beta", factory_reset: "Restablecer fábrica", ai_model_cloud: "Modelo de IA (API en la nube)", wechat_bot: "Bot de WeChat", security_hotspot: "Seguridad y punto de acceso", status_done: "Listo", status_pending: "Pendiente", access: "Acceso", memory: "Memoria", storage: "Almacenamiento", temperature: "Temperatura", cpu_timeline: "Historial de CPU",
+  },
+  "pt-BR": {
+    open_dashboard: "Abrir painel", system_update: "Atualização do sistema", beta_update: "Atualização beta", factory_reset: "Restaurar fábrica", ai_model_cloud: "Modelo de IA (API na nuvem)", wechat_bot: "Bot do WeChat", security_hotspot: "Segurança e hotspot", status_done: "Concluído", status_pending: "Pendente", access: "Acesso", memory: "Memória", storage: "Armazenamento", temperature: "Temperatura", cpu_timeline: "Histórico da CPU",
+  },
+  ko: {
+    open_dashboard: "대시보드 열기", system_update: "시스템 업데이트", beta_update: "베타 업데이트", factory_reset: "공장 초기화", ai_model_cloud: "AI 모델(클라우드 API)", wechat_bot: "WeChat 봇", security_hotspot: "보안 및 핫스팟", status_done: "완료", status_pending: "대기 중", access: "접속", memory: "메모리", storage: "저장 공간", temperature: "온도", cpu_timeline: "CPU 기록",
+  },
+  de: {
+    open_dashboard: "Dashboard öffnen", system_update: "Systemupdate", beta_update: "Beta-Update", factory_reset: "Werkseinstellungen", ai_model_cloud: "KI-Modell (Cloud-API)", wechat_bot: "WeChat-Bot", security_hotspot: "Sicherheit und Hotspot", status_done: "Fertig", status_pending: "Ausstehend", access: "Zugriff", memory: "Arbeitsspeicher", storage: "Speicher", temperature: "Temperatur", cpu_timeline: "CPU-Verlauf",
+  },
+  fr: {
+    open_dashboard: "Ouvrir le tableau de bord", system_update: "Mise à jour système", beta_update: "Mise à jour bêta", factory_reset: "Réinitialisation usine", ai_model_cloud: "Modèle IA (API cloud)", wechat_bot: "Bot WeChat", security_hotspot: "Sécurité et point d’accès", status_done: "Terminé", status_pending: "En attente", access: "Accès", memory: "Mémoire", storage: "Stockage", temperature: "Température", cpu_timeline: "Historique CPU",
+  },
+  hi: {
+    open_dashboard: "डैशबोर्ड खोलें", system_update: "सिस्टम अपडेट", beta_update: "बीटा अपडेट", factory_reset: "फ़ैक्टरी रीसेट", ai_model_cloud: "AI मॉडल (क्लाउड API)", wechat_bot: "WeChat बॉट", security_hotspot: "सुरक्षा और हॉटस्पॉट", status_done: "पूर्ण", status_pending: "लंबित", access: "पहुँच", memory: "मेमोरी", storage: "स्टोरेज", temperature: "तापमान", cpu_timeline: "CPU इतिहास",
+  },
+  ar: {
+    open_dashboard: "فتح لوحة التحكم", system_update: "تحديث النظام", beta_update: "تحديث تجريبي", factory_reset: "إعادة ضبط المصنع", ai_model_cloud: "نموذج الذكاء الاصطناعي (API سحابي)", wechat_bot: "روبوت WeChat", security_hotspot: "الأمان ونقطة الاتصال", status_done: "مكتمل", status_pending: "قيد الانتظار", access: "الوصول", memory: "الذاكرة", storage: "التخزين", temperature: "الحرارة", cpu_timeline: "سجل المعالج",
+  },
+  it: {
+    open_dashboard: "Apri dashboard", system_update: "Aggiornamento sistema", beta_update: "Aggiornamento beta", factory_reset: "Ripristino di fabbrica", ai_model_cloud: "Modello AI (API cloud)", wechat_bot: "Bot WeChat", security_hotspot: "Sicurezza e hotspot", status_done: "Completato", status_pending: "In attesa", access: "Accesso", memory: "Memoria", storage: "Archiviazione", temperature: "Temperatura", cpu_timeline: "Cronologia CPU",
+  },
+  vi: {
+    open_dashboard: "Mở bảng điều khiển", system_update: "Cập nhật hệ thống", beta_update: "Cập nhật beta", factory_reset: "Khôi phục cài đặt gốc", ai_model_cloud: "Mô hình AI (API đám mây)", wechat_bot: "Bot WeChat", security_hotspot: "Bảo mật và điểm phát", status_done: "Hoàn tất", status_pending: "Đang chờ", access: "Truy cập", memory: "Bộ nhớ", storage: "Lưu trữ", temperature: "Nhiệt độ", cpu_timeline: "Lịch sử CPU",
+  },
+  nl: {
+    open_dashboard: "Dashboard openen", system_update: "Systeemupdate", beta_update: "Beta-update", factory_reset: "Fabrieksinstellingen", ai_model_cloud: "AI-model (cloud-API)", wechat_bot: "WeChat-bot", security_hotspot: "Beveiliging en hotspot", status_done: "Gereed", status_pending: "In afwachting", access: "Toegang", memory: "Geheugen", storage: "Opslag", temperature: "Temperatuur", cpu_timeline: "CPU-geschiedenis",
+  },
+  tr: {
+    open_dashboard: "Kontrol panelini aç", system_update: "Sistem güncellemesi", beta_update: "Beta güncellemesi", factory_reset: "Fabrika ayarları", ai_model_cloud: "AI Modeli (Bulut API)", wechat_bot: "WeChat Botu", security_hotspot: "Güvenlik ve erişim noktası", status_done: "Tamamlandı", status_pending: "Bekliyor", access: "Erişim", memory: "Bellek", storage: "Depolama", temperature: "Sıcaklık", cpu_timeline: "CPU geçmişi",
+  },
+  uk: {
+    open_dashboard: "Відкрити панель", system_update: "Оновлення системи", beta_update: "Бета-оновлення", factory_reset: "Заводські налаштування", ai_model_cloud: "Модель ШІ (хмарний API)", wechat_bot: "Бот WeChat", security_hotspot: "Безпека й точка доступу", status_done: "Готово", status_pending: "Очікується", access: "Доступ", memory: "Пам’ять", storage: "Сховище", temperature: "Температура", cpu_timeline: "Історія CPU",
+  },
+  id: {
+    open_dashboard: "Buka dasbor", system_update: "Pembaruan sistem", beta_update: "Pembaruan beta", factory_reset: "Reset pabrik", ai_model_cloud: "Model AI (API cloud)", wechat_bot: "Bot WeChat", security_hotspot: "Keamanan dan hotspot", status_done: "Selesai", status_pending: "Tertunda", access: "Akses", memory: "Memori", storage: "Penyimpanan", temperature: "Suhu", cpu_timeline: "Riwayat CPU",
+  },
+  pl: {
+    open_dashboard: "Otwórz panel", system_update: "Aktualizacja systemu", beta_update: "Aktualizacja beta", factory_reset: "Reset fabryczny", ai_model_cloud: "Model AI (API chmurowe)", wechat_bot: "Bot WeChat", security_hotspot: "Bezpieczeństwo i hotspot", status_done: "Gotowe", status_pending: "Oczekuje", access: "Dostęp", memory: "Pamięć", storage: "Pamięć masowa", temperature: "Temperatura", cpu_timeline: "Historia CPU",
+  },
+  ru: {
+    open_dashboard: "Открыть панель", system_update: "Обновление системы", beta_update: "Бета-обновление", factory_reset: "Сброс настроек", ai_model_cloud: "Модель ИИ (облачный API)", wechat_bot: "Бот WeChat", security_hotspot: "Безопасность и точка доступа", status_done: "Готово", status_pending: "Ожидается", access: "Доступ", memory: "Память", storage: "Хранилище", temperature: "Температура", cpu_timeline: "История CPU",
+  },
+  fa: {
+    open_dashboard: "باز کردن داشبورد", system_update: "به‌روزرسانی سیستم", beta_update: "به‌روزرسانی آزمایشی", factory_reset: "بازنشانی کارخانه", ai_model_cloud: "مدل هوش مصنوعی (API ابری)", wechat_bot: "ربات WeChat", security_hotspot: "امنیت و نقطه اتصال", status_done: "انجام شد", status_pending: "در انتظار", access: "دسترسی", memory: "حافظه", storage: "فضای ذخیره‌سازی", temperature: "دما", cpu_timeline: "تاریخچه CPU",
+  },
+  th: {
+    open_dashboard: "เปิดแดชบอร์ด", system_update: "อัปเดตระบบ", beta_update: "อัปเดตเบต้า", factory_reset: "รีเซ็ตเป็นค่าโรงงาน", ai_model_cloud: "โมเดล AI (Cloud API)", wechat_bot: "บอต WeChat", security_hotspot: "ความปลอดภัยและฮอตสปอต", status_done: "เสร็จแล้ว", status_pending: "รอดำเนินการ", access: "การเข้าถึง", memory: "หน่วยความจำ", storage: "พื้นที่จัดเก็บ", temperature: "อุณหภูมิ", cpu_timeline: "ประวัติ CPU",
+  },
+};
+
 export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
 }
@@ -630,9 +680,20 @@ export function resolveLocale(
   browserLanguages: readonly string[] = [],
 ): Locale {
   if (isLocale(storedLocale)) return storedLocale;
-  return browserLanguages.some((language) => language.toLowerCase().startsWith("zh"))
-    ? "zh-CN"
-    : DEFAULT_LOCALE;
+
+  for (const language of browserLanguages) {
+    const normalized = language.trim().replace(/_/g, "-").toLowerCase();
+    const exact = LOCALES.find((locale) => locale.toLowerCase() === normalized);
+    if (exact) return exact;
+
+    const languageFamily = normalized.split("-", 1)[0];
+    const familyMatch = LOCALES.find(
+      (locale) => locale.toLowerCase().split("-", 1)[0] === languageFamily,
+    );
+    if (familyMatch) return familyMatch;
+  }
+
+  return DEFAULT_LOCALE;
 }
 
 function interpolateMessage(message: string, values: MessageValues = {}): string {
@@ -641,19 +702,39 @@ function interpolateMessage(message: string, values: MessageValues = {}): string
   );
 }
 
+function getLocalizedMessage(locale: Locale, key: string): string | undefined {
+  const modernMessage =
+    locale === "zh-CN"
+      ? ZH_CN_MESSAGES[key]
+      : locale === "en"
+        ? EN_MESSAGES[key]
+        : undefined;
+
+  return (
+    modernMessage ??
+    dashboardMessages[locale]?.[key] ??
+    wifiMessages[locale]?.[key] ??
+    translations[locale]?.[key] ??
+    EN_MESSAGES[key] ??
+    wifiMessages.en[key] ??
+    translations.en[key]
+  );
+}
+
 export function translate(
   locale: Locale,
   key: MessageKey,
   values?: MessageValues,
 ): string {
-  const message = locale === "zh-CN" ? ZH_CN_MESSAGES[key] || key : key;
+  const message = getLocalizedMessage(locale, key) ?? key;
   return interpolateMessage(message, values);
 }
 
 export function translateRuntime(locale: Locale, message: string): string {
-  if (locale !== "zh-CN") return message;
-  const direct = ZH_CN_MESSAGES[message];
+  const direct = getLocalizedMessage(locale, message);
   if (direct) return direct;
+
+  if (locale !== "zh-CN") return message;
 
   const telegram = message.match(/^Telegram is online as (@[^.]+)\.$/);
   if (telegram) return `Telegram \u5df2\u5728\u7ebf\uff0c\u673a\u5668\u4eba\u4e3a ${telegram[1]}\u3002`;

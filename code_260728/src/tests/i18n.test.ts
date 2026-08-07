@@ -6,15 +6,22 @@ import {
   translate,
   translateRuntime,
 } from "@/lib/i18n";
+import { i18n } from "@/i18n.config";
 
 describe("setup i18n", () => {
+  it("exposes all configured language options", () => {
+    expect(i18n.locales).toHaveLength(21);
+  });
+
   it("resolves a saved locale before the browser preference", () => {
     expect(resolveLocale("en", ["zh-CN"])).toBe("en");
     expect(resolveLocale("zh-CN", ["en-US"])).toBe("zh-CN");
   });
 
-  it("uses simplified Chinese for Chinese browser locales", () => {
+  it("resolves supported browser language families", () => {
     expect(resolveLocale(null, ["zh-HK", "en-US"])).toBe("zh-CN");
+    expect(resolveLocale(null, ["ja-JP", "en-US"])).toBe("ja");
+    expect(resolveLocale(null, ["pt-BR", "en-US"])).toBe("pt-BR");
     expect(resolveLocale("unsupported", ["en-US"])).toBe("en");
   });
 
@@ -31,6 +38,12 @@ describe("setup i18n", () => {
     expect(translate("zh-CN", "Prepare and show QR code")).toBe(
       "\u51c6\u5907\u5e76\u663e\u793a\u4e8c\u7ef4\u7801",
     );
+    expect(translate("ja", "welcome")).toBe("ClawBox へようこそ");
+    expect(translate("ru", "wifi_step_title")).toBe("Подключение к WiFi");
+    expect(translate("fr", "system_update")).toBe("Mise à jour système");
+    expect(
+      translate("fr", "wifi_switching_status", { ssid: "Office WiFi" }),
+    ).toContain("Office WiFi");
   });
 
   it("retranslates dynamic channel status messages", () => {
@@ -62,6 +75,8 @@ describe("setup i18n", () => {
     );
 
     expect(selector).not.toContain("window.location.reload");
+    expect(selector).toContain("i18n.locales.map");
+    expect(selector).toContain("<select");
     expect(provider).toContain("window.localStorage.setItem");
     expect(provider).toContain("document.documentElement.lang = locale");
   });

@@ -1,37 +1,30 @@
 "use client";
 
 import { useI18n } from "./I18nProvider";
-import type { Locale } from "@/lib/i18n";
-
-const OPTIONS: readonly { locale: Locale; label: string }[] = [
-  { locale: "en", label: "EN" },
-  { locale: "zh-CN", label: "中文" },
-];
+import { i18n } from "@/i18n.config";
+import { isLocale } from "@/lib/i18n";
 
 export default function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
 
   return (
-    <div
-      className="flex h-9 shrink-0 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
-      role="group"
-      aria-label={t("Change language")}
-    >
-      {OPTIONS.map((option) => (
-        <button
-          key={option.locale}
-          type="button"
-          onClick={() => setLocale(option.locale)}
-          aria-pressed={locale === option.locale}
-          className={`h-8 min-w-10 rounded-md px-2 text-xs font-semibold transition-colors ${
-            locale === option.locale
-              ? "bg-[var(--coral-bright)] text-white"
-              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <label className="relative block h-9 w-36 shrink-0" htmlFor="language-selector">
+      <span className="sr-only">{t("Change language")}</span>
+      <select
+        id="language-selector"
+        value={locale}
+        aria-label={t("Change language")}
+        onChange={(event) => {
+          if (isLocale(event.target.value)) setLocale(event.target.value);
+        }}
+        className="h-9 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--coral-bright)]"
+      >
+        {i18n.locales.map((option) => (
+          <option key={option.code} value={option.code}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
