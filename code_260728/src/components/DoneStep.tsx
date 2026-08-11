@@ -144,11 +144,12 @@ const AI_PROVIDERS = [
   { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hint: "Get your API key from platform.deepseek.com", tokenUrl: "https://platform.deepseek.com/api_keys" },
 ] as const;
 
-type ConfigurableChatChannelId = "feishu" | "qqbot" | "telegram" | "whatsapp" | "line";
+type ConfigurableChatChannelId = "feishu" | "qqbot" | "telegram" | "whatsapp" | "line" | "wecom";
 type ChatChannelId = "wechat" | ConfigurableChatChannelId | AdditionalChannelId;
 
 const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string; description: string }[] = [
   { id: "wechat", tag: "WX", name: "WeChat", description: "Sign in to a Tencent iLink bot with a QR code; direct messages only." },
+  { id: "wecom", tag: "WC", name: "WeCom", description: "Connect an Enterprise WeChat smart bot over WebSocket with Bot ID and Secret." },
   { id: "telegram", tag: "TG", name: "Telegram", description: "Create a bot with BotFather, then paste its complete Bot Token." },
   { id: "whatsapp", tag: "WA", name: "WhatsApp", description: "Link a WhatsApp account by scanning a QR code. No Bot Token is needed." },
   { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Create or connect a Feishu / Lark bot by scanning a QR code." },
@@ -167,6 +168,7 @@ const CHANNEL_STATUS_PATHS: Record<ConfigurableChatChannelId, string> = {
   feishu: "/setup-api/channels/feishu/status",
   line: "/setup-api/channels/line/status",
   qqbot: "/setup-api/channels/qqbot/status",
+  wecom: "/setup-api/channels/wecom/status",
 };
 
 const CONFIGURABLE_CHAT_CHANNELS: readonly ConfigurableChatChannelId[] = [
@@ -175,6 +177,7 @@ const CONFIGURABLE_CHAT_CHANNELS: readonly ConfigurableChatChannelId[] = [
   "feishu",
   "line",
   "qqbot",
+  "wecom",
 ];
 
 const ADDITIONAL_CHAT_CHANNELS: readonly AdditionalChannelId[] = [
@@ -281,6 +284,10 @@ const CHANNEL_FIELDS: Partial<Record<ChatChannelId, { key: string; label: string
     { key: "clientSecret", label: "Client Secret", placeholder: "QQ Bot Client Secret", secret: true },
   ],
   telegram: [{ key: "botToken", label: "Bot Token", placeholder: "123456:ABC-DEF...", secret: true }],
+  wecom: [
+    { key: "botId", label: "WeCom Bot ID", placeholder: "WeCom Bot ID" },
+    { key: "secret", label: "WeCom Secret", placeholder: "WeCom Bot Secret", secret: true },
+  ],
   line: [
     { key: "channelAccessToken", label: "Channel Access Token", placeholder: "LINE channel access token", secret: true },
     { key: "channelSecret", label: "Channel Secret", placeholder: "LINE channel secret", secret: true },
@@ -1012,6 +1019,19 @@ function ChannelCredentialGuide({
     />;
   }
 
+  if (channel === "wecom") {
+    return <CredentialGuide
+      title={t("How to configure a WeCom bot")}
+      {...props}
+      steps={[
+        <>{t("WeCom step 1")} <code>openclaw plugins install @wecom/wecom-openclaw-plugin</code>.</>,
+        <>{t("WeCom step 2")} <a href="https://open.work.weixin.qq.com/help?doc_id=21657" target="_blank" rel="noreferrer">{t("WeCom AI Bot documentation")}</a>.</>,
+        <>{t("WeCom step 3")}</>,
+        <>{t("WeCom step 4")}</>,
+      ]}
+    />;
+  }
+
   if (channel === "whatsapp") {
     return <CredentialGuide
       title={t("How to link WhatsApp")}
@@ -1527,6 +1547,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       };
       if (channel === "feishu") {
         config.domain = feishuDomain;
+        config.connectionMode = "websocket";
+      }
+      if (channel === "wecom") {
         config.connectionMode = "websocket";
       }
       const response = await fetch(`/setup-api/channels/${channel}`, {

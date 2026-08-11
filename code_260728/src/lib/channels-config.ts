@@ -3,7 +3,7 @@ import { readConfig, restartGateway, updateConfig } from "./openclaw-config";
 
 /* ── 渠道定义 ── */
 
-export const MANAGED_CHANNELS = ["feishu", "qqbot", "telegram", "whatsapp", "line"] as const;
+export const MANAGED_CHANNELS = ["feishu", "qqbot", "telegram", "whatsapp", "line", "wecom"] as const;
 export type ManagedChannel = (typeof MANAGED_CHANNELS)[number];
 
 // channels 段里每个渠道的实际键名。
@@ -14,6 +14,7 @@ const CHANNEL_CONFIG_KEY: Record<ManagedChannel, string> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
   line:     "line",
+  wecom:    "wecom",
 };
 
 // 每个渠道允许写入的字段（与前端 CHANNEL_FIELDS 一一对应）
@@ -23,6 +24,7 @@ const FIELD_WHITELIST: Record<ManagedChannel, string[]> = {
   telegram: ["enabled", "botToken"],
   whatsapp: ["enabled"],
   line:     ["enabled", "channelAccessToken", "channelSecret"],
+  wecom:    ["enabled", "botId", "secret", "connectionMode"],
 };
 
 // 密钥字段：GET 不回传；POST 传空字符串 = 保持已存储的旧值
@@ -32,6 +34,7 @@ const SECRET_FIELDS: Record<ManagedChannel, string[]> = {
   telegram: ["botToken"],
   whatsapp: [],
   line:     ["channelAccessToken", "channelSecret"],
+  wecom:    ["secret"],
 };
 
 type ChannelRecord = Record<string, unknown>;
@@ -98,6 +101,9 @@ export async function setChannelConfig(
   // 飞书官方插件的 connectionMode 取值是 "websocket"（CLI 向导写入的），
   // 前端 App ID 模式传的是 "app"，统一映射，避免覆盖成插件不认识的值
   if (channel === "feishu" && merged.connectionMode === "app") {
+    merged.connectionMode = "websocket";
+  }
+  if (channel === "wecom") {
     merged.connectionMode = "websocket";
   }
     channels[configKey] = merged;
