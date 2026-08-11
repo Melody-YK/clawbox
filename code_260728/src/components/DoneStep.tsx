@@ -6,7 +6,7 @@ import type { StepStatus, UpdateState } from "@/lib/updater";
 import StatusMessage from "./StatusMessage";
 import CredentialGuide from "./CredentialGuide";
 import ChannelSetupExtras, { type AdditionalChannelId } from "./ChannelSetupExtras";
-import { getLocale, t } from "@/lib/i18n";
+import { getLocale, t, tf } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
 import { parseAuthInput, tryCloseOAuthWindow } from "@/lib/oauth-utils";
@@ -42,6 +42,7 @@ interface SetupStatusResponse {
   setup_complete: boolean;
   password_configured: boolean;
   wifi_configured: boolean;
+  wifi_skipped?: boolean;
   ai_model_configured: boolean;
   ai_model_provider?: string;
   wifi_connecting?: boolean;
@@ -114,7 +115,7 @@ const RESET_STEPS = [
 ];
 
 const INPUT_CLASS =
-  "w-full px-3.5 py-2.5 bg-[var(--bg-deep)] border border-gray-600 rounded-lg text-sm text-gray-200 outline-none focus:border-[var(--coral-bright)] transition-colors placeholder-gray-500";
+  "w-full min-w-0 px-3.5 py-2.5 bg-[var(--bg-deep)] border border-gray-600 rounded-lg text-sm text-gray-200 outline-none focus:border-[var(--coral-bright)] transition-colors placeholder-gray-500";
 
 const INPUT_WITH_TOGGLE_CLASS = `${INPUT_CLASS} pr-10`;
 
@@ -128,7 +129,7 @@ const SECTION_HEADER_CLASS =
   "flex items-center gap-2.5 w-full py-3.5 px-5 text-sm font-medium text-[var(--text-primary)] hover:text-gray-100 hover:bg-[var(--bg-surface)]/30 bg-transparent border-none cursor-pointer text-left transition-colors";
 
 const SECTION_BODY_CLASS =
-  "px-5 pb-5 border-t border-[var(--border-subtle)]/30 pt-4 space-y-4";
+  "min-w-0 px-3 pb-4 border-t border-[var(--border-subtle)]/30 pt-4 space-y-4 sm:px-5 sm:pb-5";
 
 const LABEL_CLASS =
   "block text-xs font-semibold text-[var(--text-secondary)] mb-1.5";
@@ -442,7 +443,7 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   return (
-    <div id={`section-${id}`} className="card-surface rounded-xl overflow-hidden scroll-mt-24">
+    <div id={`section-${id}`} className="card-surface min-w-0 rounded-xl overflow-hidden scroll-mt-24">
       <button type="button" onClick={() => onToggle(id)} className={SECTION_HEADER_CLASS}>
         <Chevron open={open} />
         {title}
@@ -1290,7 +1291,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         } else if (data.wifi_connecting) {
           setWifiStatus({
             type: "success",
-            message: `Connecting to ${data.wifi_target_ssid ?? "the selected WiFi"} and waiting for a DHCP address. Reopen the device in a system browser after your phone rejoins the same network.`,
+            message: tf("wifi_switching_status", {
+              ssid: data.wifi_target_ssid ?? t("selected_wifi"),
+            }),
           });
         } else if (data.wifi_configured) {
           setWifiStatus((prev) =>
@@ -1298,8 +1301,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               ? null
               : {
                   type: "success",
-                  message:
-                    "WiFi is connected. Open the device?s .local address in a system browser, or use the IP shown on the device screen if this client does not resolve .local.",
+                  message: data.wifi_skipped
+                    ? "wifi_skipped_status"
+                    : "wifi_connected_status",
                 },
           );
         }
@@ -3046,7 +3050,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   /* ── Render ── */
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="mx-auto w-full min-w-0 max-w-2xl">
       {completeError && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-400">{completeError}</div>
       )}
@@ -3056,12 +3060,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       </div>
 
       {/* Primary actions */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="mb-6 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={setupComplete ? () => (window.location.href = "/dashboard") : completeSetup}
             disabled={finishButtonDisabled}
-            className="py-3 btn-gradient text-white rounded-xl text-sm font-semibold transition transform cursor-pointer hover:scale-105 shadow-lg shadow-[rgba(249,115,22,0.25)] disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2"
+            className="btn-gradient flex min-w-0 items-center justify-center gap-2 rounded-xl px-3 py-3 text-center text-sm font-semibold leading-tight text-white shadow-lg shadow-[rgba(249,115,22,0.25)] transition transform cursor-pointer hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2"/><path d="M8 12c0-2.2 1.8-4 4-4"/><path d="M16 12c0 2.2-1.8 4-4 4"/><circle cx="12" cy="12" r="1.5"/></svg>
             {finishing ? t("finishing") : setupComplete ? t("open_dashboard") : t("finish_setup")}
@@ -3070,7 +3074,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             type="button"
             onClick={isUpdateRunning ? undefined : openUpdateConfirm}
             disabled={isUpdateRunning}
-            className="py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 hover:scale-105 transition-all cursor-pointer disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25"
+            className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-center text-sm font-semibold leading-tight text-white shadow-lg shadow-emerald-600/25 transition-all cursor-pointer hover:bg-emerald-500 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             {isUpdateRunning ? t("updating") : t("system_update")}
@@ -3079,7 +3083,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             type="button"
             onClick={() => setBetaConfirm(true)}
             disabled={isUpdateRunning}
-            className="py-3 bg-purple-600 text-white rounded-xl text-sm font-semibold hover:bg-purple-500 hover:scale-105 transition-all cursor-pointer disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25"
+            className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3 py-3 text-center text-sm font-semibold leading-tight text-white shadow-lg shadow-purple-600/25 transition-all cursor-pointer hover:bg-purple-500 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="m17 5-5-3-5 3"/><path d="m17 19-5 3-5-3"/><path d="M2 12h20"/></svg>
             {t("beta_update")}
@@ -3087,7 +3091,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           <button
             type="button"
             onClick={() => setResetConfirm(true)}
-            className="py-3 bg-red-500/10 text-red-400 rounded-xl text-sm font-semibold hover:bg-red-500/20 hover:scale-105 transition-all cursor-pointer flex items-center justify-center gap-2 border border-red-500/20"
+            className="flex min-w-0 items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-center text-sm font-semibold leading-tight text-red-400 transition-all cursor-pointer hover:bg-red-500/20 hover:scale-105"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
             {t("factory_reset")}
@@ -3912,7 +3916,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             onChange={setWifiPassword}
             visible={showWifiPassword}
             onToggle={() => setShowWifiPassword((v) => !v)}
-            placeholder="WiFi password (empty if open)"
+            placeholder={t("wifi_password_placeholder")}
             autoComplete="off"
           />
           <p className="text-xs text-amber-400/80 leading-relaxed mt-2">
@@ -3923,7 +3927,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               {t("open_wifi_setup")}
             </a>
           </p>
-          {wifiStatus && <StatusMessage type={wifiStatus.type} message={wifiStatus.message} />}
+          {wifiStatus && <StatusMessage type={wifiStatus.type} message={t(wifiStatus.message)} />}
           <button
             type="button"
             onClick={connectWifi}
@@ -3937,7 +3941,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
         {/* Security & Hotspot */}
         <CollapsibleSection id="security" title={t("security_hotspot")} done={securityDone} open={openSection === "security"} onToggle={toggle}>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="password" className={LABEL_CLASS}>{t("set_password")}</label>
               <PasswordInput
@@ -4012,7 +4016,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 </p>
               )}
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
               {/* Row 1 */}
               <SystemInfoWidget
                 label="CPU"

@@ -46,6 +46,57 @@ describe("setup i18n", () => {
     ).toContain("Office WiFi");
   });
 
+  it("translates the finish setup action in every configured locale", () => {
+    for (const { code } of i18n.locales) {
+      expect(translate(code, "finish_setup")).not.toBe("finish_setup");
+    }
+    expect(translate("zh-CN", "finish_setup")).toBe("完成设置");
+  });
+
+  it("translates the security, hotspot, and access section in Simplified Chinese", () => {
+    const messages = {
+      set_password: "设置密码",
+      confirm_password: "确认密码",
+      min_8_chars: "至少 8 个字符",
+      enable_setup_hotspot: "启用设置热点",
+      hotspot_name: "热点名称",
+      hotspot_password_optional: "热点密码（可选）",
+      leave_empty_open: "留空表示无密码",
+      access: "访问地址",
+      ipv4_fallback: "IPv4 备用地址",
+      optional_dns_alias: "DNS 别名（可选）",
+      memory: "内存",
+      storage: "存储空间",
+      temperature: "温度",
+      cpu_timeline: "CPU 趋势",
+      cores: "核",
+      free: "可用",
+      loading_system_info: "正在加载系统信息...",
+    } as const;
+
+    for (const [key, value] of Object.entries(messages)) {
+      expect(translate("zh-CN", key)).toBe(value);
+    }
+  });
+
+  it("translates the dashboard WiFi section in Simplified Chinese", () => {
+    const messages = {
+      network_name: "网络名称（SSID）",
+      wifi_name: "输入 WiFi 名称",
+      wifi_reconnect_note:
+        "连接新 WiFi 会暂时中断当前页面。设备接入新网络后，请通过 .local 地址或设备显示的 IP 重新访问。",
+      open_wifi_setup: "打开 WiFi 设置页面",
+      selected_wifi: "所选 WiFi",
+      wifi_skipped_status: "已跳过 WiFi 配置，当前继续使用以太网连接。",
+      wifi_connected_status:
+        "WiFi 已连接。请在系统浏览器中打开设备的 .local 地址；如果当前设备无法解析 .local，请使用设备屏幕显示的 IP 地址。",
+    } as const;
+
+    for (const [key, value] of Object.entries(messages)) {
+      expect(translate("zh-CN", key)).toBe(value);
+    }
+  });
+
   it("retranslates dynamic channel status messages", () => {
     expect(translateRuntime("zh-CN", "Telegram is online as @clawbox_bot.")).toBe(
       "Telegram 已在线，机器人为 @clawbox_bot。",
@@ -79,5 +130,7 @@ describe("setup i18n", () => {
     expect(selector).toContain("<select");
     expect(provider).toContain("window.localStorage.setItem");
     expect(provider).toContain("document.documentElement.lang = locale");
+    expect(provider).toContain("JSON.stringify({ locale: nextLocale })");
+    expect(provider).not.toContain("JSON.stringify({ locale })");
   });
 });

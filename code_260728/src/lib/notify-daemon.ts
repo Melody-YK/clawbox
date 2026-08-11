@@ -10,6 +10,7 @@
  *   - "image": qr_url 为 data:image/png;base64 图片 → 墨水屏图片直显 (WhatsApp)
  */
 import fs from "fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "path";
 
 export const CHAT_QR_TRIGGER_FILE = "/home/clawbox/clawbox/data/chat-qr.json";
@@ -24,7 +25,7 @@ export async function notifyDaemonChatQr(
       recursive: true,
       mode: 0o770,
     });
-    const tmpFile = `${CHAT_QR_TRIGGER_FILE}.${process.pid}.${Date.now()}.tmp`;
+    const tmpFile = `${CHAT_QR_TRIGGER_FILE}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
     await fs.writeFile(
       tmpFile,
       JSON.stringify({
@@ -64,7 +65,7 @@ export async function notifyDaemonLocale(locale: string): Promise<boolean> {
       recursive: true,
       mode: 0o770,
     });
-    const tmpFile = `${LOCALE_TRIGGER_FILE}.${process.pid}.${Date.now()}.tmp`;
+    const tmpFile = `${LOCALE_TRIGGER_FILE}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
     await fs.writeFile(
       tmpFile,
       JSON.stringify({

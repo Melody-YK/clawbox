@@ -5,6 +5,7 @@ export interface SetupStatus {
   setup_complete: boolean;
   password_configured: boolean;
   wifi_configured: boolean;
+  wifi_skipped: boolean;
   wifi_mode: "ap" | "client" | "disconnected" | "unknown";
   hotspot_active: boolean;
   ai_model_configured: boolean;
@@ -43,15 +44,19 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 
   const runtimeWifiConfigured =
     runtime.mode === "client" && runtime.connected && !!runtime.ipv4;
+  const wifiSkipped = config.wifi_skipped === true && !runtimeWifiConfigured;
   const storedWifiConfigured = !!config.wifi_configured;
-  const wifiTargetSsid = getString(config.wifi_target_ssid) ?? runtime.ssid ?? null;
-  const storedWifiSsid = getString(config.wifi_ssid);
-  const storedWifiReadyUrl = getString(config.wifi_access_url);
-  const storedWifiIpv4 = getString(config.wifi_ipv4);
+  const wifiTargetSsid = wifiSkipped
+    ? null
+    : getString(config.wifi_target_ssid) ?? runtime.ssid ?? null;
+  const storedWifiSsid = wifiSkipped ? null : getString(config.wifi_ssid);
   const hasWifiTarget = !!(wifiTargetSsid || storedWifiSsid);
   const hotspotActive = runtime.hotspotActive || runtime.mode === "ap";
   const runtimeRequiresWifiSetup = hotspotActive && hasWifiTarget;
-  const wifiConfigured = runtimeWifiConfigured || (storedWifiConfigured && !runtimeRequiresWifiSetup);
+  const wifiConfigured =
+    runtimeWifiConfigured ||
+    wifiSkipped ||
+    (storedWifiConfigured && !runtimeRequiresWifiSetup);
 
   const wifiAttemptMs = parseIsoMs(config.wifi_last_attempt_at);
   const staleWifiPending =
@@ -69,13 +74,12 @@ export async function getSetupStatus(): Promise<SetupStatus> {
     !!config.wifi_connecting && !runtimeWifiConfigured && !failedBackToHotspot;
   let wifiLastError = runtimeWifiConfigured ? null : getString(config.wifi_last_error);
   const aiModelLastError = getString(config.ai_model_last_error);
-  const wifiIpv4 = runtimeWifiConfigured ? runtime.ipv4 : storedWifiIpv4;
+  const wifiIpv4 = runtimeWifiConfigured ? runtime.ipv4 : null;
   const wifiIpv4Url = wifiIpv4 ? `http://${wifiIpv4}/` : null;
-  const wifiReadyUrl = hotspotActive
-    ? null
-    : runtimeWifiConfigured
+  const wifiReadyUrl =
+    !hotspotActive && runtimeWifiConfigured
       ? wifiIpv4Url ?? runtime.accessUrl
-      : storedWifiReadyUrl ?? wifiIpv4Url;
+      : null;
 
   if (failedBackToHotspot && !wifiLastError) {
     wifiLastError = WIFI_AP_FALLBACK_MESSAGE;
@@ -91,6 +95,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
   if (runtimeWifiConfigured && (!storedWifiConfigured || !!config.wifi_connecting || wifiLastError)) {
     await setMany({
       wifi_configured: true,
+      wifi_skipped: undefined,
       hotspot_enabled: false,
       wifi_connecting: false,
       wifi_target_ssid: runtime.ssid ?? wifiTargetSsid ?? undefined,
@@ -115,6 +120,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
     setup_complete: !!config.setup_complete,
     password_configured: !!config.password_configured,
     wifi_configured: wifiConfigured,
+    wifi_skipped: wifiSkipped,
     wifi_mode: runtime.mode,
     hotspot_active: hotspotActive,
     ai_model_configured: !!config.ai_model_configured,

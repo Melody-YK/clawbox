@@ -158,8 +158,8 @@ export default function SetupWizard() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 mx-auto mt-3 flex w-[calc(100%-1.5rem)] max-w-6xl items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#111827]/80 px-3 py-2.5 shadow-2xl shadow-black/20 backdrop-blur-xl sm:px-5">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
+      <header className="sticky top-0 z-50 mx-auto mt-3 flex min-w-0 w-[calc(100%-1.5rem)] max-w-6xl items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#111827]/80 px-3 py-2.5 shadow-2xl shadow-black/20 backdrop-blur-xl sm:gap-3 sm:px-5">
+        <Link href="/" className="flex min-w-0 items-center gap-2">
           <Image
             src="/headless-claw-box.png"
             alt="ClawBox"
@@ -177,14 +177,14 @@ export default function SetupWizard() {
             </span>
           </div>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           {visibleStep < 2 && <ProgressBar currentStep={visibleStep} />}
           <LanguageSelector />
         </div>
       </header>
 
       <main
-        className="flex-1 flex flex-col items-center justify-start sm:justify-center px-4 pt-2 pb-4 sm:p-6"
+        className="flex w-full min-w-0 flex-1 flex-col items-center justify-start px-4 pt-2 pb-4 sm:justify-center sm:p-6"
       >
         {visibleStep === 1 && <WifiStep externalStatus={wifiStatusHint} />}
         {visibleStep === 2 && <DoneStep setupComplete={setupComplete} />}

@@ -26,6 +26,7 @@ async function runWifiSwitch(
     const result = await switchToClient(ssid, passwordValue);
     await setMany({
       wifi_configured: true,
+      wifi_skipped: undefined,
       hotspot_enabled: false,
       wifi_connecting: false,
       wifi_target_ssid: result.status.ssid ?? ssid,
@@ -68,9 +69,13 @@ export async function POST(request: Request) {
     await setMany({
       wifi_ssid: undefined,
       wifi_configured: true,
+      wifi_skipped: true,
       wifi_connecting: false,
       wifi_target_ssid: undefined,
       wifi_last_error: undefined,
+      wifi_last_attempt_at: undefined,
+      wifi_access_url: undefined,
+      wifi_ipv4: undefined,
     });
     const accessInfo = await getDeviceAccessInfo();
     return NextResponse.json({
@@ -99,6 +104,7 @@ export async function POST(request: Request) {
     await setMany({
       wifi_ssid: ssidTrimmed,
       wifi_configured: false,
+      wifi_skipped: undefined,
       wifi_connecting: true,
       wifi_target_ssid: ssidTrimmed,
       wifi_last_attempt_at: new Date().toISOString(),

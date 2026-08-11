@@ -59,15 +59,6 @@ export default function I18nProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = locale;
   }, [locale]);
 
-  useEffect(() => {
-    // 语言变化(含首次加载解析出的语言)同步给守护进程; 失败静默, 不影响网页
-    fetch("/setup-api/locale", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locale }),
-    }).catch(() => {});
-  }, [locale]);
-
   const setLocale = useCallback((nextLocale: Locale) => {
     clientLocale = nextLocale;
     try {
@@ -76,6 +67,11 @@ export default function I18nProvider({ children }: { children: ReactNode }) {
       // The in-memory selection still works when storage is unavailable.
     }
     localeListeners.forEach((listener) => listener());
+    void fetch("/setup-api/locale", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: nextLocale }),
+    }).catch(() => {});
   }, []);
 
   const t = useCallback(

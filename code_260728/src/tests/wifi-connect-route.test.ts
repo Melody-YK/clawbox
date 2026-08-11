@@ -80,7 +80,13 @@ describe("wifi connect route", () => {
   it("clears stored WiFi targets when the setup is explicitly skipped for Ethernet", async () => {
     await fs.writeFile(
       CONFIG_PATH,
-      JSON.stringify({ wifi_ssid: "AKA-ylwz", wifi_target_ssid: "AKA-ylwz" }, null, 2),
+      JSON.stringify({
+        wifi_ssid: "AKA-ylwz",
+        wifi_target_ssid: "AKA-ylwz",
+        wifi_access_url: "http://192.168.31.55/",
+        wifi_ipv4: "192.168.31.55",
+        wifi_last_attempt_at: "2026-08-10T00:00:00.000Z",
+      }, null, 2),
       "utf-8",
     );
 
@@ -91,8 +97,12 @@ describe("wifi connect route", () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
     expect(saved.wifi_configured).toBe(true);
+    expect(saved.wifi_skipped).toBe(true);
     expect(saved.wifi_ssid).toBeUndefined();
     expect(saved.wifi_target_ssid).toBeUndefined();
+    expect(saved.wifi_access_url).toBeUndefined();
+    expect(saved.wifi_ipv4).toBeUndefined();
+    expect(saved.wifi_last_attempt_at).toBeUndefined();
   });
 
   it("records a pending WiFi switch immediately and marks success after DHCP is ready", async () => {
@@ -130,6 +140,7 @@ describe("wifi connect route", () => {
     );
     expect(saved.wifi_connecting).toBe(false);
     expect(saved.wifi_configured).toBe(true);
+    expect(saved.wifi_skipped).toBeUndefined();
     expect(saved.wifi_target_ssid).toBe("AKA-ylwz");
     expect(saved.wifi_last_error).toBeUndefined();
   });

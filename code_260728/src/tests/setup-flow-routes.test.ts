@@ -158,6 +158,7 @@ describe("Setup complete route", () => {
     });
     await writeConfig({
       wifi_configured: false,
+      wifi_skipped: true,
       wifi_connecting: true,
       wifi_target_ssid: "AKA-ylwz",
       ai_model_configured: true,
@@ -169,9 +170,11 @@ describe("Setup complete route", () => {
 
     expect(res.status).toBe(200);
     expect(body.wifi_configured).toBe(true);
+    expect(body.wifi_skipped).toBe(false);
     expect(body.wifi_connecting).toBe(false);
     expect(body.wifi_target_ssid).toBe("AKA-ylwz");
     expect(saved.wifi_configured).toBe(true);
+    expect(saved.wifi_skipped).toBeUndefined();
     expect(saved.wifi_connecting).toBe(false);
   });
 
@@ -200,9 +203,14 @@ describe("Setup complete route", () => {
     expect(saved.wifi_configured).toBe(true);
   });
 
-  it("preserves explicit Ethernet-only skip state when no WiFi target exists", async () => {
+  it("preserves Ethernet-only skip state without returning stale WiFi metadata", async () => {
     await writeConfig({
       wifi_configured: true,
+      wifi_skipped: true,
+      wifi_ssid: "old-network",
+      wifi_target_ssid: "old-network",
+      wifi_access_url: "http://192.168.103.4/",
+      wifi_ipv4: "192.168.103.4",
       ai_model_configured: true,
     });
 
@@ -211,7 +219,12 @@ describe("Setup complete route", () => {
 
     expect(res.status).toBe(200);
     expect(body.wifi_configured).toBe(true);
+    expect(body.wifi_skipped).toBe(true);
     expect(body.hotspot_active).toBe(false);
+    expect(body.wifi_target_ssid).toBeNull();
+    expect(body.wifi_ready_url).toBeNull();
+    expect(body.wifi_ipv4).toBeNull();
+    expect(body.wifi_ipv4_url).toBeNull();
   });
 
   it("clears pending WiFi state immediately after the device falls back to the hotspot", async () => {

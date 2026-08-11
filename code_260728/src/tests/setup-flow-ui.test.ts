@@ -54,4 +54,22 @@ describe("setup flow UI behavior", () => {
 
     expect(source).not.toMatch(/setTimeout\s*\(\s*\(\)\s*=>\s*onNext/);
   });
+
+  it("keeps the setup shell and dashboard controls shrinkable on mobile", async () => {
+    const [wizard, doneStep, languageSelector] = await Promise.all([
+      fs.readFile(path.join(process.cwd(), "components/SetupWizard.tsx"), "utf-8"),
+      fs.readFile(path.join(process.cwd(), "components/DoneStep.tsx"), "utf-8"),
+      fs.readFile(path.join(process.cwd(), "components/LanguageSelector.tsx"), "utf-8"),
+    ]);
+
+    expect(wizard).toContain("w-full min-w-0");
+    expect(doneStep).toContain("grid-cols-1 gap-3 sm:grid-cols-2");
+    expect(doneStep).toContain("grid-cols-1 gap-3 sm:grid-cols-3");
+    expect(doneStep).toContain('data.wifi_skipped');
+    expect(doneStep).toContain('? "wifi_skipped_status"');
+    expect(doneStep).toContain(': "wifi_connected_status"');
+    expect(doneStep).toContain('placeholder={t("wifi_password_placeholder")}');
+    expect(doneStep).toContain('message={t(wifiStatus.message)}');
+    expect(languageSelector).toContain("w-28 shrink-0 sm:w-36");
+  });
 });

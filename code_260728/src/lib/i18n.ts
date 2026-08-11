@@ -266,6 +266,30 @@ const translations: Record<LocaleCode, Record<string, string>> = {
   "th": { "welcome": "ยินดีต้อนรับสู่ ClawBox", "welcome_description": "ผู้ช่วย AI ส่วนตัวของคุณใกล้พร้อมแล้ว ตัวช่วยนี้จะช่วยตั้งค่าให้เสร็จในไม่กี่นาที", "get_started": "เริ่มต้น", "wifi_step_title": "เชื่อมต่อ WiFi", "wifi_step_description": "เลือกเครือข่าย WiFi เพื่อดำเนินการตั้งค่าต่อ", "wifi_ssid": "ชื่อเครือข่าย (SSID)", "wifi_ssid_placeholder": "ป้อนชื่อเครือข่าย WiFi", "wifi_password_placeholder": "ป้อนรหัสผ่าน WiFi (เว้นว่างหากเป็นเครือข่ายเปิด)", "scan_wifi": "สแกนเครือข่าย", "scanning": "กำลังสแกน...", "connect": "เชื่อมต่อ", "password": "รหัสผ่าน", "no_wifi_found": "ไม่พบเครือข่าย WiFi", "connecting": "กำลังเชื่อมต่อ...", "connected": "เชื่อมต่อแล้ว", "open_device": "เปิดอุปกรณ์", "setup_complete": "ตั้งค่าเสร็จสมบูรณ์", "setup_complete_description": "ClawBox พร้อมใช้งานแล้ว!", "dashboard": "ไปที่แดชบอร์ด", "retry": "ลองอีกครั้ง", "loading": "กำลังโหลด" },
 };
 
+const finishSetupMessages: Record<LocaleCode, string> = {
+  en: "Finish Setup",
+  "zh-CN": "完成设置",
+  "zh-TW": "完成設定",
+  ja: "セットアップを完了",
+  es: "Finalizar configuración",
+  "pt-BR": "Concluir configuração",
+  ko: "설정 완료",
+  de: "Einrichtung abschließen",
+  fr: "Terminer la configuration",
+  hi: "सेटअप पूरा करें",
+  ar: "إكمال الإعداد",
+  it: "Completa configurazione",
+  vi: "Hoàn tất thiết lập",
+  nl: "Installatie voltooien",
+  tr: "Kurulumu tamamla",
+  uk: "Завершити налаштування",
+  id: "Selesaikan Penyiapan",
+  pl: "Zakończ konfigurację",
+  ru: "Завершить настройку",
+  fa: "تکمیل راه‌اندازی",
+  th: "ตั้งค่าให้เสร็จ",
+};
+
 const wifiMessages: Record<LocaleCode, Record<string, string>> = {
   en: {
     wifi_switching_status: "The device is switching to {ssid} and waiting for a DHCP address. Reconnect your phone to the same WiFi and keep this page open. When DHCP is ready, an Open Device button will appear with the full reachable address. If the connection fails, reconnect to the setup hotspot and try again.",
@@ -340,6 +364,30 @@ const ZH_CN_MESSAGES: Record<string, string> = {
   "status_done": "\u5df2\u5b8c\u6210",
   "status_pending": "\u5f85\u914d\u7f6e",
   "security_hotspot": "\u5b89\u5168\u4e0e\u70ed\u70b9",
+  "set_password": "\u8bbe\u7f6e\u5bc6\u7801",
+  "confirm_password": "\u786e\u8ba4\u5bc6\u7801",
+  "min_8_chars": "\u81f3\u5c11 8 \u4e2a\u5b57\u7b26",
+  "enable_setup_hotspot": "\u542f\u7528\u8bbe\u7f6e\u70ed\u70b9",
+  "hotspot_name": "\u70ed\u70b9\u540d\u79f0",
+  "hotspot_password_optional": "\u70ed\u70b9\u5bc6\u7801\uff08\u53ef\u9009\uff09",
+  "leave_empty_open": "\u7559\u7a7a\u8868\u793a\u65e0\u5bc6\u7801",
+  "access": "\u8bbf\u95ee\u5730\u5740",
+  "ipv4_fallback": "IPv4 \u5907\u7528\u5730\u5740",
+  "optional_dns_alias": "DNS \u522b\u540d\uff08\u53ef\u9009\uff09",
+  "memory": "\u5185\u5b58",
+  "storage": "\u5b58\u50a8\u7a7a\u95f4",
+  "temperature": "\u6e29\u5ea6",
+  "cpu_timeline": "CPU \u8d8b\u52bf",
+  "cores": "\u6838",
+  "free": "\u53ef\u7528",
+  "loading_system_info": "\u6b63\u5728\u52a0\u8f7d\u7cfb\u7edf\u4fe1\u606f...",
+  "network_name": "\u7f51\u7edc\u540d\u79f0\uff08SSID\uff09",
+  "wifi_name": "\u8f93\u5165 WiFi \u540d\u79f0",
+  "wifi_reconnect_note": "\u8fde\u63a5\u65b0 WiFi \u4f1a\u6682\u65f6\u4e2d\u65ad\u5f53\u524d\u9875\u9762\u3002\u8bbe\u5907\u63a5\u5165\u65b0\u7f51\u7edc\u540e\uff0c\u8bf7\u901a\u8fc7 .local \u5730\u5740\u6216\u8bbe\u5907\u663e\u793a\u7684 IP \u91cd\u65b0\u8bbf\u95ee\u3002",
+  "open_wifi_setup": "\u6253\u5f00 WiFi \u8bbe\u7f6e\u9875\u9762",
+  "selected_wifi": "\u6240\u9009 WiFi",
+  "wifi_skipped_status": "\u5df2\u8df3\u8fc7 WiFi \u914d\u7f6e\uff0c\u5f53\u524d\u7ee7\u7eed\u4f7f\u7528\u4ee5\u592a\u7f51\u8fde\u63a5\u3002",
+  "wifi_connected_status": "WiFi \u5df2\u8fde\u63a5\u3002\u8bf7\u5728\u7cfb\u7edf\u6d4f\u89c8\u5668\u4e2d\u6253\u5f00\u8bbe\u5907\u7684 .local \u5730\u5740\uff1b\u5982\u679c\u5f53\u524d\u8bbe\u5907\u65e0\u6cd5\u89e3\u6790 .local\uff0c\u8bf7\u4f7f\u7528\u8bbe\u5907\u5c4f\u5e55\u663e\u793a\u7684 IP \u5730\u5740\u3002",
   "save": "\u4fdd\u5b58",
   "saving": "\u6b63\u5728\u4fdd\u5b58...",
   "connecting": "\u6b63\u5728\u8fde\u63a5...",
@@ -723,6 +771,8 @@ function interpolateMessage(message: string, values: MessageValues = {}): string
 }
 
 function getLocalizedMessage(locale: Locale, key: string): string | undefined {
+  const finishSetupMessage =
+    key === "finish_setup" ? finishSetupMessages[locale] : undefined;
   const modernMessage =
     locale === "zh-CN"
       ? ZH_CN_MESSAGES[key]
@@ -732,6 +782,7 @@ function getLocalizedMessage(locale: Locale, key: string): string | undefined {
 
   return (
     modernMessage ??
+    finishSetupMessage ??
     dashboardMessages[locale]?.[key] ??
     wifiMessages[locale]?.[key] ??
     translations[locale]?.[key] ??
