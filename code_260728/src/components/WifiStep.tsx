@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import StatusMessage from "./StatusMessage";
-import { t, tf } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
+import type { MessageValues } from "@/lib/i18n";
 
 interface WifiNetwork {
   ssid: string;
@@ -32,6 +32,7 @@ interface ConnectResponse {
 interface WifiStatusHint {
   type: "success" | "error";
   message: string;
+  values?: MessageValues;
   readyUrl?: string;
   ipv4Url?: string;
   ipv4?: string;
@@ -68,8 +69,7 @@ export default function WifiStep({
 }: {
   externalStatus?: WifiStatusHint | null;
 }) {
-  const { locale } = useI18n();
-  void locale;
+  const { t } = useI18n();
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -80,6 +80,7 @@ export default function WifiStep({
   const [status, setStatus] = useState<{
     type: "success" | "error";
     message: string;
+    values?: MessageValues;
   } | null>(null);
   const [statusSnapshot, setStatusSnapshot] = useState<WifiStatusSnapshot | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
@@ -146,7 +147,8 @@ export default function WifiStep({
       }
 
       if (!data || data.scanning) {
-        throw new Error("Scan timed out");
+        setStatus({ type: "error", message: "wifi_scan_timeout" });
+        return;
       }
 
       if (data.error) {
@@ -159,13 +161,14 @@ export default function WifiStep({
       if (list.length === 0) {
         setStatus({
           type: "error",
-          message: "No networks found. Move closer to the router and try Scan Networks again.",
+          message: "wifi_no_networks",
         });
       }
     } catch (err) {
       setStatus({
         type: "error",
-        message: `Scan failed: ${err instanceof Error ? err.message : err}`,
+        message: "wifi_scan_failed_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       setScanning(false);
@@ -191,14 +194,15 @@ export default function WifiStep({
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const errData: unknown = await res.json().catch(() => null);
-        throw new Error(getErrorMessage(errData) || `Connection failed (${res.status})`);
+        throw new Error(getErrorMessage(errData) || `HTTP ${res.status}`);
       }
       await res.json().catch(() => null);
 
       setConnecting(false);
       setStatus({
         type: "success",
-        message: tf("wifi_switching_status", { ssid: ssid.trim() }),
+        message: "wifi_switching_status",
+        values: { ssid: ssid.trim() },
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -207,20 +211,22 @@ export default function WifiStep({
         const mdnsHint =
           statusSnapshot?.accessUrl ||
           (statusSnapshot?.mdnsHost ? `http://${statusSnapshot.mdnsHost}/` : "");
-        const hostnameHint = statusSnapshot?.hostname
-          ? `路由器客户端列表里找主机名 ${statusSnapshot.hostname}`
-          : "路由器客户端列表里找 clawbox-xxxxxx 主机";
-
         setStatus({
           type: "success",
-          message:
-            `连接过程中热点断开是正常现象。请把手机切到目标 WiFi 后访问 ${mdnsHint || "设备的 .local 地址"}。如果 .local 无法访问，请用设备屏幕显示的 IPv4，或在 ${hostnameHint}。`,
+          message: statusSnapshot?.hostname
+            ? "wifi_connection_fallback_hostname"
+            : "wifi_connection_fallback_router",
+          values: {
+            address: mdnsHint || ".local",
+            ...(statusSnapshot?.hostname ? { hostname: statusSnapshot.hostname } : {}),
+          },
         });
         return;
       }
       setStatus({
         type: "error",
-        message: `Connection failed: ${err instanceof Error ? err.message : err}`,
+        message: "wifi_connection_failed_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       if (!controller.signal.aborted) setConnecting(false);
@@ -333,7 +339,7 @@ export default function WifiStep({
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? t("hide_password") : t("show_password")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent border-none cursor-pointer p-0.5"
               >
                 {showPassword ? (
@@ -351,10 +357,11 @@ export default function WifiStep({
             <StatusMessage
               type={visibleStatus.type}
               message={visibleStatus.message}
+              values={visibleStatus.values}
             />
             {visibleStatus.type === "success" && externalStatus?.connected && openDeviceUrl && (
               <div className="mt-3 p-3 rounded-lg border border-green-500/20 bg-[#00e5cc]/5">
-                <p className="text-xs text-[#00e5cc] mb-2">Direct access address is ready.</p>
+                <p className="text-xs text-[#00e5cc] mb-2">{t("direct_access_ready")}</p>
                 <p className="text-xs text-gray-300 break-all mb-3">{openDeviceUrl}</p>
                 {ipv4FallbackText && (
                   <p className="text-xs text-gray-400 mb-3">IPv4: {ipv4FallbackText}</p>

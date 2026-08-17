@@ -8,7 +8,7 @@ import WifiStep from "./WifiStep";
 import DoneStep from "./DoneStep";
 import LanguageSelector from "./LanguageSelector";
 import { isLocalChannelPreview, resolveSetupFlowState } from "@/lib/setup-flow";
-import { t, tf } from "@/lib/i18n";
+import type { MessageValues } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
 function applyStatusData(
@@ -22,16 +22,19 @@ function applyStatusData(
 }
 
 export default function SetupWizard() {
-  const { locale } = useI18n();
-  void locale;
+  const { t } = useI18n();
   const [currentStep, setCurrentStep] = useState(1);
   const [setupComplete, setSetupComplete] = useState(false);
   const [localChannelPreview, setLocalChannelPreview] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [setupError, setSetupError] = useState<string | null>(null);
+  const [setupError, setSetupError] = useState<{
+    message: string;
+    values?: MessageValues;
+  } | null>(null);
   const [wifiStatusHint, setWifiStatusHint] = useState<{
     type: "success" | "error";
     message: string;
+    values?: MessageValues;
     readyUrl?: string;
     ipv4Url?: string;
     ipv4?: string;
@@ -69,16 +72,19 @@ export default function SetupWizard() {
           const targetSsid =
             typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
               ? data.wifi_target_ssid
-              : "the selected WiFi";
+              : null;
           setWifiStatusHint({
             type: "success",
-            message: tf("wifi_switching_status", { ssid: targetSsid }),
+            message: targetSsid
+              ? "wifi_switching_status"
+              : "wifi_switching_selected_status",
+            ...(targetSsid ? { values: { ssid: targetSsid } } : {}),
           });
         } else if (data?.wifi_configured && data?.wifi_mode === "client") {
           const connectedSsid =
             typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
               ? data.wifi_target_ssid
-              : "your WiFi";
+              : null;
           const readyUrl =
             typeof data?.wifi_ready_url === "string" && data.wifi_ready_url.trim()
               ? data.wifi_ready_url
@@ -98,10 +104,14 @@ export default function SetupWizard() {
             readyUrl,
             ipv4Url,
             ipv4,
-            message:
-              readyUrl || ipv4Url
-                ? `Connected to ${connectedSsid}. Tap “Open Device” to jump directly.`
-                : `Connected to ${connectedSsid}. You can continue setup on this network.`,
+            message: readyUrl || ipv4Url
+              ? connectedSsid
+                ? "wifi_connected_open_device"
+                : "wifi_connected_open_device_default"
+              : connectedSsid
+                ? "wifi_connected_continue"
+                : "wifi_connected_continue_default",
+            ...(connectedSsid ? { values: { ssid: connectedSsid } } : {}),
           });
         } else {
           setWifiStatusHint(null);
@@ -113,7 +123,10 @@ export default function SetupWizard() {
       } catch (err) {
         if (cancelled || (err instanceof DOMException && err.name === "AbortError")) return;
         console.error("[SetupWizard] Failed to fetch setup status:", err);
-        setSetupError(err instanceof Error ? err.message : "Failed to load setup status");
+        setSetupError({
+          message: err instanceof Error ? "setup_status_failed_detail" : "setup_status_failed",
+          ...(err instanceof Error ? { values: { detail: err.message } } : {}),
+        });
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -143,7 +156,9 @@ export default function SetupWizard() {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="text-center max-w-md">
-          <p className="text-[var(--coral-bright)] text-sm mb-4">{setupError}</p>
+          <p className="text-[var(--coral-bright)] text-sm mb-4">
+            {t(setupError.message, setupError.values)}
+          </p>
           <button
             type="button"
             onClick={() => setRetryCount((c) => c + 1)}

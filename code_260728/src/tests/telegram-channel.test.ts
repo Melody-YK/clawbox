@@ -10,6 +10,7 @@ const TEST_ROOT = path.join(
 const OPENCLAW_HOME = path.join(TEST_ROOT, ".openclaw");
 const CONFIG_PATH = path.join(OPENCLAW_HOME, "openclaw.json");
 const VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcd";
+const PROXY_URL = "http://proxy-user:proxy-password@192.168.1.4:7890";
 
 let telegram: typeof import("@/lib/channels/telegram");
 
@@ -80,6 +81,25 @@ describe("Telegram token validation", () => {
       telegram.validateTelegramBotToken(VALID_TOKEN, fetchMock as typeof fetch),
     ).rejects.toMatchObject({ code: "invalid_token" });
   });
+
+  it("sends Telegram validation through the configured proxy", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { id: 123456789, is_bot: true, first_name: "ClawBox", username: "clawbox_test_bot" },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await telegram.validateTelegramBotToken(VALID_TOKEN, fetchMock as typeof fetch, PROXY_URL);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("api.telegram.org"),
+      expect.objectContaining({ dispatcher: expect.anything() }),
+    );
+  });
 });
 
 describe("Telegram OpenClaw config", () => {
@@ -96,6 +116,7 @@ describe("Telegram OpenClaw config", () => {
     const view = await telegram.saveTelegramConfig({
       botToken: VALID_TOKEN,
       enabled: true,
+      proxy: PROXY_URL,
     });
     const stored = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8"));
 
@@ -104,15 +125,18 @@ describe("Telegram OpenClaw config", () => {
       dmPolicy: "pairing",
       groupPolicy: "disabled",
       botToken: VALID_TOKEN,
+      proxy: PROXY_URL,
     });
     expect(view).toEqual({
       configured: true,
       enabled: true,
       hasToken: true,
+      hasProxy: true,
       dmPolicy: "pairing",
       groupPolicy: "disabled",
     });
     expect(JSON.stringify(view)).not.toContain(VALID_TOKEN);
+    expect(JSON.stringify(view)).not.toContain("proxy-password");
   });
 
   it("retains the saved token when only the enabled flag changes", async () => {
@@ -126,7 +150,20 @@ describe("Telegram OpenClaw config", () => {
       configured: true,
       enabled: false,
       hasToken: true,
+      hasProxy: false,
     });
+  });
+
+  it("retains or removes only the proxy according to the explicit update", async () => {
+    await telegram.saveTelegramConfig({ botToken: VALID_TOKEN, enabled: true, proxy: PROXY_URL });
+    await telegram.saveTelegramConfig({ enabled: true });
+    expect(JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8")).channels.telegram.proxy).toBe(PROXY_URL);
+
+    const view = await telegram.saveTelegramConfig({ enabled: true, removeProxy: true });
+    const stored = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8"));
+    expect(stored.channels.telegram).not.toHaveProperty("proxy");
+    expect(stored.channels.telegram.botToken).toBe(VALID_TOKEN);
+    expect(view.hasProxy).toBe(false);
   });
 });
 
@@ -135,6 +172,7 @@ describe("Telegram status parsing", () => {
     configured: true,
     enabled: true,
     hasToken: true,
+    hasProxy: false,
     dmPolicy: "pairing",
     groupPolicy: "disabled",
   };

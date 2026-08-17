@@ -1,14 +1,17 @@
 "use client";
 
 import { useI18n } from "./I18nProvider";
+import type { MessageValues } from "@/lib/i18n";
 
 interface StatusMessageProps {
   type: "success" | "error";
   message: string;
+  values?: MessageValues;
+  suffix?: string;
 }
 
-export default function StatusMessage({ type, message }: StatusMessageProps) {
-  const { translateText } = useI18n();
+export default function StatusMessage({ type, message, values, suffix }: StatusMessageProps) {
+  const { t, translateText } = useI18n();
   return (
     <output
       aria-live={type === "error" ? "assertive" : "polite"}
@@ -19,7 +22,8 @@ export default function StatusMessage({ type, message }: StatusMessageProps) {
           : "bg-red-500/10 text-red-400 border border-red-500/20"
       }`}
     >
-      {translateText(message)}
+      {values ? t(message, values) : translateText(message)}
+      {suffix ? ` ${translateText(suffix)}` : ""}
     </output>
   );
 }

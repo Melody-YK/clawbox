@@ -21,7 +21,7 @@ const CHANNEL_CONFIG_KEY: Record<ManagedChannel, string> = {
 const FIELD_WHITELIST: Record<ManagedChannel, string[]> = {
   feishu:   ["enabled", "appId", "appSecret", "connectionMode", "domain"],
   qqbot:    ["enabled", "appId", "clientSecret"],
-  telegram: ["enabled", "botToken"],
+  telegram: ["enabled", "botToken", "proxy"],
   whatsapp: ["enabled"],
   line:     ["enabled", "channelAccessToken", "channelSecret"],
   wecom:    ["enabled", "botId", "secret", "connectionMode"],
@@ -31,7 +31,7 @@ const FIELD_WHITELIST: Record<ManagedChannel, string[]> = {
 const SECRET_FIELDS: Record<ManagedChannel, string[]> = {
   feishu:   ["appSecret"],
   qqbot:    ["clientSecret"],
-  telegram: ["botToken"],
+  telegram: ["botToken", "proxy"],
   whatsapp: [],
   line:     ["channelAccessToken", "channelSecret"],
   wecom:    ["secret"],

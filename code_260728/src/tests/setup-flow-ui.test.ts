@@ -69,7 +69,41 @@ describe("setup flow UI behavior", () => {
     expect(doneStep).toContain('? "wifi_skipped_status"');
     expect(doneStep).toContain(': "wifi_connected_status"');
     expect(doneStep).toContain('placeholder={t("wifi_password_placeholder")}');
-    expect(doneStep).toContain('message={t(wifiStatus.message)}');
+    expect(doneStep).toContain('message={wifiStatus.message} values={wifiStatus.values}');
     expect(languageSelector).toContain("w-28 shrink-0 sm:w-36");
+  });
+
+  it("keeps asynchronous channel notices translatable after a locale change", async () => {
+    const source = await fs.readFile(
+      path.join(process.cwd(), "components/DoneStep.tsx"),
+      "utf-8",
+    );
+    const statusLogic = source.slice(
+      source.indexOf("const saveChatChannel"),
+      source.indexOf("if (providerDone && !wechatDone)"),
+    );
+
+    expect(statusLogic).not.toMatch(/message:\s*t\(/);
+    expect(statusLogic).toContain(
+      'message: "QR setup completed and the channel is connected."',
+    );
+    expect(source).toContain(
+      "message={channelStatuses[channelId].message} values={channelStatuses[channelId].values} suffix={channelStatuses[channelId].suffix}",
+    );
+  });
+
+  it("shows and approves pending Telegram users from the channel page", async () => {
+    const [doneStep, telegramChannel] = await Promise.all([
+      fs.readFile(path.join(process.cwd(), "components/DoneStep.tsx"), "utf-8"),
+      fs.readFile(path.join(process.cwd(), "lib/channels/telegram.ts"), "utf-8"),
+    ]);
+
+    expect(doneStep).toContain("<TelegramPairingPanel");
+    expect(doneStep).toContain('fetch("/setup-api/channels/telegram/pairing"');
+    expect(doneStep).toContain('method: "POST"');
+    expect(doneStep).toContain('message: "Telegram user approved. Return to Telegram and send a new message."');
+    expect(doneStep).toContain('t("Telegram step 4")');
+    expect(telegramChannel).toContain("const OPENCLAW_PAIRING_TIMEOUT_MS = 30_000;");
+    expect(telegramChannel.match(/OPENCLAW_PAIRING_TIMEOUT_MS/g)).toHaveLength(3);
   });
 });

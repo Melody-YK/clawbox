@@ -46,6 +46,32 @@ describe("setup i18n", () => {
     ).toContain("Office WiFi");
   });
 
+  it("translates dashboard labels and dynamic setup statuses", () => {
+    expect(translate("zh-CN", "provider")).toBe("\u4f9b\u5e94\u5546");
+    expect(translate("zh-CN", "subscription_oauth")).toBe("\u8ba2\u9605 OAuth");
+    expect(translate("zh-CN", "api_key")).toBe("API \u5bc6\u94a5");
+    expect(translate("zh-CN", "get_api_key")).toBe("\u83b7\u53d6 API \u5bc6\u94a5");
+    expect(translate("zh-CN", "wifi_scan_timeout")).toBe("WiFi \u626b\u63cf\u8d85\u65f6");
+    expect(translate("zh-CN", "password_min_error")).toBe("\u5bc6\u7801\u81f3\u5c11\u9700\u8981 8 \u4e2a\u5b57\u7b26");
+    expect(translate("zh-CN", "wechat_qr_refreshed")).toContain("\u4e8c\u7ef4\u7801\u5df2\u5237\u65b0");
+    expect(translate("zh-CN", "ai_polling_failed")).toBe("AI \u6388\u6743\u8f6e\u8be2\u5931\u8d25");
+    expect(
+      translate("zh-CN", "wifi_connection_failed_detail", { detail: "HTTP 500" }),
+    ).toBe("WiFi \u8fde\u63a5\u5931\u8d25\uff1aHTTP 500");
+    expect(
+      translate("en", "wifi_connected_open_device", { ssid: "Office WiFi" }),
+    ).toBe("Connected to Office WiFi. Tap Open Device to jump directly.");
+    expect(translate("zh-CN", "Use a proxy for this channel")).toBe("为此通道使用代理");
+    expect(translate("zh-CN", "Proxy address")).toBe("代理地址");
+    expect(translate("zh-TW", "Use a proxy for this channel")).toBe("為此頻道使用代理");
+    expect(translate("zh-CN", "Gateway is reloading")).toBe("网关正在重新加载");
+    expect(translate("zh-TW", "Gateway is reloading")).toBe("閘道正在重新載入");
+    expect(translate("zh-CN", "Telegram user access")).toBe("Telegram 用户访问");
+    expect(translate("zh-CN", "Approve user")).toBe("批准用户");
+    expect(translate("zh-TW", "Pairing code")).toBe("配對碼");
+    expect(translate("en", "Telegram step 4")).toContain("approve it under Telegram user access");
+  });
+
   it("translates the finish setup action in every configured locale", () => {
     for (const { code } of i18n.locales) {
       expect(translate(code, "finish_setup")).not.toBe("finish_setup");

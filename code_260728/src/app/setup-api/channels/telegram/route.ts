@@ -4,11 +4,12 @@ import { restartGateway } from "@/lib/openclaw-config";
 import {
   getTelegramBotToken,
   getTelegramConfig,
+  getTelegramProxy,
   saveTelegramConfig,
   validateTelegramBotToken,
-  waitForTelegramConnected,
   type TelegramErrorCode,
 } from "@/lib/channels/telegram";
+import { resolveChannelProxyUpdate } from "@/lib/channels/proxy";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function statusForTelegramError(error: unknown): number {
   const code = errorCode(error);
-  if (code === "invalid_token" || code === "invalid_pairing_code") return 400;
+  if (code === "invalid_token" || code === "invalid_pairing_code" || code === "invalid_proxy") return 400;
   return 502;
 }
 
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { botToken?: unknown; enabled?: unknown };
+  let body: { botToken?: unknown; enabled?: unknown; proxy?: unknown; removeProxy?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -77,6 +78,18 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  if (body.proxy !== undefined && typeof body.proxy !== "string") {
+    return NextResponse.json(
+      { error: "proxy must be a string" },
+      { status: 400 },
+    );
+  }
+  if (body.removeProxy !== undefined && typeof body.removeProxy !== "boolean") {
+    return NextResponse.json(
+      { error: "removeProxy must be a boolean" },
+      { status: 400 },
+    );
+  }
 
   const enabled = body.enabled !== false;
   const incomingToken =
@@ -84,6 +97,23 @@ export async function POST(request: Request) {
       ? body.botToken.trim()
       : undefined;
   const existingToken = await getTelegramBotToken();
+  const existingProxy = await getTelegramProxy();
+  const incomingProxy =
+    typeof body.proxy === "string" && body.proxy.trim()
+      ? body.proxy.trim()
+      : undefined;
+  let effectiveProxy: string | null;
+  try {
+    effectiveProxy = resolveChannelProxyUpdate(existingProxy, {
+      proxy: incomingProxy,
+      removeProxy: body.removeProxy === true,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: errorMessage(error, "Invalid proxy URL."), saved: false },
+      { status: 400 },
+    );
+  }
 
   if (enabled && !incomingToken && !existingToken) {
     return NextResponse.json(
@@ -93,9 +123,11 @@ export async function POST(request: Request) {
   }
 
   let bot: Awaited<ReturnType<typeof validateTelegramBotToken>> | null = null;
-  if (incomingToken) {
+  const tokenToValidate = incomingToken || existingToken;
+  const proxyChanged = incomingProxy !== undefined || body.removeProxy === true;
+  if (tokenToValidate && (incomingToken !== undefined || (enabled && proxyChanged))) {
     try {
-      bot = await validateTelegramBotToken(incomingToken);
+      bot = await validateTelegramBotToken(tokenToValidate, fetch, effectiveProxy);
     } catch (error) {
       const message = errorMessage(error, "Telegram Bot Token validation failed.");
       await setMany({ telegram_last_error: message }).catch(() => {});
@@ -111,6 +143,8 @@ export async function POST(request: Request) {
     savedConfig = await saveTelegramConfig({
       botToken: incomingToken,
       enabled,
+      proxy: incomingProxy,
+      removeProxy: body.removeProxy === true,
     });
   } catch (error) {
     const message = errorMessage(error, "Failed to save Telegram config.");
@@ -121,11 +155,19 @@ export async function POST(request: Request) {
     );
   }
 
+  await setMany({
+    telegram_last_error: undefined,
+    telegram_reload_started_at: enabled ? Date.now() : undefined,
+  }).catch(() => {});
+
   try {
     await restartGateway();
   } catch (error) {
     const message = `Telegram config was saved, but OpenClaw Gateway restart failed: ${errorMessage(error, "unknown error")}`;
-    await setMany({ telegram_last_error: message }).catch(() => {});
+    await setMany({
+      telegram_last_error: message,
+      telegram_reload_started_at: undefined,
+    }).catch(() => {});
     return NextResponse.json(
       { error: message, saved: true, ...savedConfig },
       { status: 502 },
@@ -133,35 +175,25 @@ export async function POST(request: Request) {
   }
 
   if (!enabled) {
-    await setMany({ telegram_last_error: undefined }).catch(() => {});
     return NextResponse.json({
       success: true,
       saved: true,
       state: "disabled",
       connected: false,
+      reloading: false,
       bot,
       ...savedConfig,
     });
   }
 
-  try {
-    const status = await waitForTelegramConnected();
-    await setMany({ telegram_last_error: undefined }).catch(() => {});
-    return NextResponse.json({
-      success: true,
-      saved: true,
-      bot,
-      ...status,
-    });
-  } catch (error) {
-    const message = errorMessage(
-      error,
-      "Telegram config was saved, but the channel did not become online.",
-    );
-    await setMany({ telegram_last_error: message }).catch(() => {});
-    return NextResponse.json(
-      { error: message, saved: true, ...savedConfig },
-      { status: 502 },
-    );
-  }
+  return NextResponse.json({
+    success: true,
+    saved: true,
+    ...savedConfig,
+    state: "configured",
+    connected: false,
+    reloading: true,
+    lastError: null,
+    bot,
+  });
 }

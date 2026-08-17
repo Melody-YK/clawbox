@@ -48,31 +48,44 @@ afterAll(async () => {
 
 describe("Discord channel", () => {
   it("validates the Bot Token without returning it", async () => {
+    const proxy = "http://proxy-user:proxy-password@192.168.1.4:7890";
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ id: "123456789012345678", username: "clawbox", global_name: "ClawBox" }), { status: 200 }));
-    const result = await discord.validateDiscordBotToken("secret-discord-token", fetcher as typeof fetch);
+    const result = await discord.validateDiscordBotToken("secret-discord-token", fetcher as typeof fetch, proxy);
     expect(result).toEqual({ id: "123456789012345678", username: "clawbox", globalName: "ClawBox" });
     expect(JSON.stringify(result)).not.toContain("secret-discord-token");
-    expect(fetcher).toHaveBeenCalledWith("https://discord.com/api/v10/users/@me", expect.objectContaining({ headers: { Authorization: "Bot secret-discord-token" } }));
+    expect(fetcher).toHaveBeenCalledWith("https://discord.com/api/v10/users/@me", expect.objectContaining({ headers: { Authorization: "Bot secret-discord-token" }, dispatcher: expect.anything() }));
   });
 
   it("writes token, pairing policy, and a restricted guild entry", async () => {
-    const view = await discord.saveDiscordConfig({ token: "secret-discord-token", serverId: "123456789012345678", userId: "987654321098765432", enabled: true });
+    const proxy = "http://proxy-user:proxy-password@192.168.1.4:7890";
+    const view = await discord.saveDiscordConfig({ token: "secret-discord-token", serverId: "123456789012345678", userId: "987654321098765432", enabled: true, proxy });
     const stored = JSON.parse(await fs.readFile(CONFIG_PATH, "utf8"));
-    expect(stored.channels.discord).toMatchObject({ enabled: true, token: "secret-discord-token", dmPolicy: "pairing", groupPolicy: "allowlist", serverId: "123456789012345678", userId: "987654321098765432", guilds: { "123456789012345678": { requireMention: true, users: ["987654321098765432"] } } });
+    expect(stored.channels.discord).toMatchObject({ enabled: true, token: "secret-discord-token", proxy, dmPolicy: "pairing", groupPolicy: "allowlist", serverId: "123456789012345678", userId: "987654321098765432", guilds: { "123456789012345678": { requireMention: true, users: ["987654321098765432"] } } });
     expect(view.hasToken).toBe(true);
+    expect(view.hasProxy).toBe(true);
     expect(JSON.stringify(view)).not.toContain("secret-discord-token");
+    expect(JSON.stringify(view)).not.toContain("proxy-password");
+
+    await discord.saveDiscordConfig({ enabled: true, removeProxy: true });
+    expect(JSON.parse(await fs.readFile(CONFIG_PATH, "utf8")).channels.discord).not.toHaveProperty("proxy");
   });
 });
 
 describe("Zalo Bot channel", () => {
   it("uses the official getMe endpoint and account-scoped schema", async () => {
     const token = "123456789:secret_value";
+    const proxy = "http://proxy-user:proxy-password@192.168.1.4:7890";
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ ok: true, result: { id: "42", name: "ClawBox Zalo" } }), { status: 200 }));
-    await expect(zalo.validateZaloBotToken(token, fetcher as typeof fetch)).resolves.toEqual({ id: "42", name: "ClawBox Zalo" });
-    await zalo.saveZaloConfig({ botToken: token, enabled: true });
+    await expect(zalo.validateZaloBotToken(token, fetcher as typeof fetch, proxy)).resolves.toEqual({ id: "42", name: "ClawBox Zalo" });
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("bot-api.zaloplatforms.com"), expect.objectContaining({ dispatcher: expect.anything() }));
+    await zalo.saveZaloConfig({ botToken: token, enabled: true, proxy });
     const stored = JSON.parse(await fs.readFile(CONFIG_PATH, "utf8"));
-    expect(stored.channels.zalo).toEqual({ enabled: true, accounts: { default: { enabled: true, dmPolicy: "pairing", groupPolicy: "disabled", botToken: token } } });
-    expect(await zalo.getZaloConfig()).toEqual({ configured: true, enabled: true, hasToken: true, dmPolicy: "pairing", groupPolicy: "disabled" });
+    expect(stored.channels.zalo).toEqual({ enabled: true, accounts: { default: { enabled: true, dmPolicy: "pairing", groupPolicy: "disabled", botToken: token, proxy } } });
+    expect(await zalo.getZaloConfig()).toEqual({ configured: true, enabled: true, hasToken: true, hasProxy: true, dmPolicy: "pairing", groupPolicy: "disabled" });
+    expect(JSON.stringify(await zalo.getZaloConfig())).not.toContain("proxy-password");
+
+    await zalo.saveZaloConfig({ enabled: true, removeProxy: true });
+    expect(JSON.parse(await fs.readFile(CONFIG_PATH, "utf8")).channels.zalo.accounts.default).not.toHaveProperty("proxy");
   });
 });
 
@@ -175,6 +188,8 @@ describe("channel setup UI", () => {
     expect(source).toContain("/setup-api/channels/signal/login-status");
     expect(source).toContain('locale === "zh-CN"');
     expect(source).toContain("Unofficial personal-account automation");
+    expect(source).toContain("<ChannelProxyInput id=\"discord\"");
+    expect(source).toContain("<ChannelProxyInput id=\"zalo\"");
   });
 
   it("exposes every new channel through the unified chat-channel picker", async () => {
@@ -191,5 +206,6 @@ describe("channel setup UI", () => {
     expect(source).toContain("activeChannel={activeChatChannel}");
     expect(source).toContain("onCompletionChange={handleAdditionalChannelCompletion}");
     expect(source).toContain("refreshAllAdditionalChannelStatuses(controller.signal)");
+    expect(source).toContain("<ChannelProxyInput");
   });
 });

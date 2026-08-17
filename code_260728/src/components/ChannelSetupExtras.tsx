@@ -7,6 +7,7 @@ import type { MessageKey } from "@/lib/i18n";
 import CredentialGuide from "./CredentialGuide";
 import { useI18n } from "./I18nProvider";
 import StatusMessage from "./StatusMessage";
+import ChannelProxyInput from "./ChannelProxyInput";
 
 const INPUT_CLASS =
   "w-full min-w-0 px-3.5 py-2.5 bg-[var(--bg-deep)] border border-gray-600 rounded-lg text-sm text-gray-200 outline-none focus:border-[var(--coral-bright)] transition-colors placeholder-gray-500";
@@ -49,6 +50,7 @@ interface StatusResponse {
   lastError?: string | null;
   account?: string | null;
   cliPath?: string;
+  hasProxy?: boolean;
 }
 
 interface PersonalConfig extends StatusResponse {
@@ -310,10 +312,16 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
   const [discordStatus, setDiscordStatus] = useState<StatusResponse | null>(null);
   const [discordNotice, setDiscordNotice] = useState<Notice | null>(null);
   const [discordBusy, setDiscordBusy] = useState(false);
+  const [discordProxyEnabled, setDiscordProxyEnabled] = useState(false);
+  const [discordProxy, setDiscordProxy] = useState("");
+  const [discordHasSavedProxy, setDiscordHasSavedProxy] = useState(false);
   const [zaloToken, setZaloToken] = useState("");
   const [zaloStatus, setZaloStatus] = useState<StatusResponse | null>(null);
   const [zaloNotice, setZaloNotice] = useState<Notice | null>(null);
   const [zaloBusy, setZaloBusy] = useState(false);
+  const [zaloProxyEnabled, setZaloProxyEnabled] = useState(false);
+  const [zaloProxy, setZaloProxy] = useState("");
+  const [zaloHasSavedProxy, setZaloHasSavedProxy] = useState(false);
   const [personalConfig, setPersonalConfig] = useState<PersonalConfig | null>(null);
   const [personalRisk, setPersonalRisk] = useState(false);
   const [personalRiskSaved, setPersonalRiskSaved] = useState(false);
@@ -329,13 +337,34 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
   const personalQr = useQrSession("/setup-api/channels/zalouser/qrcode", "/setup-api/channels/zalouser/login-status", "/setup-api/channels/zalouser/cancel");
   const signalQr = useQrSession("/setup-api/channels/signal/qrcode", "/setup-api/channels/signal/login-status", "/setup-api/channels/signal/cancel");
 
-  const refreshStatus = useCallback(async (path: string, setter: (value: StatusResponse) => void) => {
+  const refreshStatus = useCallback(async (path: string, setter: (value: StatusResponse) => void): Promise<StatusResponse | null> => {
     try {
-      setter(await requestJson<StatusResponse>(path, { method: "GET" }));
+      const data = await requestJson<StatusResponse>(path, { method: "GET" });
+      setter(data);
+      return data;
     } catch (error) {
       setter({ state: "error", connected: false, lastError: errorText(error, "Status check failed.") });
+      return null;
     }
   }, []);
+
+  const refreshDiscordStatus = useCallback(async () => {
+    const data = await refreshStatus("/setup-api/channels/discord/status", setDiscordStatus);
+    if (!data) return;
+    const hasProxy = data.hasProxy === true;
+    setDiscordHasSavedProxy(hasProxy);
+    setDiscordProxyEnabled(hasProxy);
+    setDiscordProxy("");
+  }, [refreshStatus]);
+
+  const refreshZaloStatus = useCallback(async () => {
+    const data = await refreshStatus("/setup-api/channels/zalo/status", setZaloStatus);
+    if (!data) return;
+    const hasProxy = data.hasProxy === true;
+    setZaloHasSavedProxy(hasProxy);
+    setZaloProxyEnabled(hasProxy);
+    setZaloProxy("");
+  }, [refreshStatus]);
 
   const loadPersonal = useCallback(async () => {
     try {
@@ -369,12 +398,12 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
 
   useEffect(() => {
     if (!canConfigure) return;
-    void refreshStatus("/setup-api/channels/discord/status", setDiscordStatus);
-    void refreshStatus("/setup-api/channels/zalo/status", setZaloStatus);
+    void refreshDiscordStatus();
+    void refreshZaloStatus();
     void loadSignal();
     void loadPersonal();
     void loadClawbot();
-  }, [canConfigure, loadClawbot, loadPersonal, loadSignal, refreshStatus]);
+  }, [canConfigure, loadClawbot, loadPersonal, loadSignal, refreshDiscordStatus, refreshZaloStatus]);
 
   useEffect(() => {
     if (clawbotQr.session?.state === "connected") void loadClawbot();
@@ -423,10 +452,13 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
     setDiscordBusy(true);
     setDiscordNotice(null);
     try {
-      await requestJson("/setup-api/channels/discord", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: discordToken.trim() || undefined, serverId: discordServerId.trim() || undefined, userId: discordUserId.trim() || undefined, enabled: true }) });
+      const data = await requestJson<StatusResponse>("/setup-api/channels/discord", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: discordToken.trim() || undefined, serverId: discordServerId.trim() || undefined, userId: discordUserId.trim() || undefined, enabled: true, proxy: discordProxyEnabled ? discordProxy.trim() || undefined : undefined, removeProxy: !discordProxyEnabled && discordHasSavedProxy }) });
       setDiscordToken("");
+      setDiscordProxy("");
+      setDiscordHasSavedProxy(data.hasProxy === true);
+      setDiscordProxyEnabled(data.hasProxy === true);
       setDiscordNotice({ type: "success", message: t("Discord settings saved. Check status for live gateway evidence") });
-      await refreshStatus("/setup-api/channels/discord/status", setDiscordStatus);
+      await refreshDiscordStatus();
     } catch (error) {
       setDiscordNotice({ type: "error", message: errorText(error, "Failed to save Discord config.") });
     } finally {
@@ -438,10 +470,13 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
     setZaloBusy(true);
     setZaloNotice(null);
     try {
-      await requestJson("/setup-api/channels/zalo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ botToken: zaloToken.trim() || undefined, enabled: true }) });
+      const data = await requestJson<StatusResponse>("/setup-api/channels/zalo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ botToken: zaloToken.trim() || undefined, enabled: true, proxy: zaloProxyEnabled ? zaloProxy.trim() || undefined : undefined, removeProxy: !zaloProxyEnabled && zaloHasSavedProxy }) });
       setZaloToken("");
+      setZaloProxy("");
+      setZaloHasSavedProxy(data.hasProxy === true);
+      setZaloProxyEnabled(data.hasProxy === true);
       setZaloNotice({ type: "success", message: t("Zalo Bot settings saved. Check status for live gateway evidence") });
-      await refreshStatus("/setup-api/channels/zalo/status", setZaloStatus);
+      await refreshZaloStatus();
     } catch (error) {
       setZaloNotice({ type: "error", message: errorText(error, "Failed to save Zalo config.") });
     } finally {
@@ -509,8 +544,9 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
           <div><label htmlFor="extra-discord-token" className={LABEL_CLASS}>{t("Discord Bot Token")}</label><input id="extra-discord-token" aria-label={t("Discord Bot Token")} type="password" value={discordToken} onChange={(event) => setDiscordToken(event.target.value)} placeholder={t("Paste Discord Bot Token")} autoComplete="off" spellCheck={false} className={INPUT_CLASS} /></div>
           <div><label htmlFor="extra-discord-server" className={LABEL_CLASS}>{t("Discord Server ID")}</label><input id="extra-discord-server" aria-label={t("Discord Server ID")} inputMode="numeric" value={discordServerId} onChange={(event) => setDiscordServerId(event.target.value)} placeholder={t("Server ID (optional for DMs)")} className={INPUT_CLASS} /></div>
           <div><label htmlFor="extra-discord-user" className={LABEL_CLASS}>{t("Discord User ID")}</label><input id="extra-discord-user" aria-label={t("Discord User ID")} inputMode="numeric" value={discordUserId} onChange={(event) => setDiscordUserId(event.target.value)} placeholder={t("Your User ID (recommended)")} className={INPUT_CLASS} /></div>
+          <ChannelProxyInput id="discord" enabled={discordProxyEnabled} hasSavedProxy={discordHasSavedProxy} value={discordProxy} disabled={discordBusy} t={t} onEnabledChange={setDiscordProxyEnabled} onValueChange={setDiscordProxy} />
           {discordNotice && <StatusMessage type={discordNotice.type} message={discordNotice.message} />}
-          <div className="flex flex-wrap gap-2"><button type="button" disabled={discordBusy || (!discordToken.trim() && discordStatus?.configured !== true)} onClick={() => void saveDiscord()} className={BUTTON_CLASS}>{discordBusy ? t("Saving...") : t("Save Discord settings")}</button><button type="button" onClick={() => void refreshStatus("/setup-api/channels/discord/status", setDiscordStatus)} className={SECONDARY_BUTTON_CLASS}>{t("Check live status")}</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" disabled={discordBusy || (!discordToken.trim() && discordStatus?.configured !== true) || (discordProxyEnabled && !discordHasSavedProxy && !discordProxy.trim())} onClick={() => void saveDiscord()} className={BUTTON_CLASS}>{discordBusy ? t("Saving...") : t("Save Discord settings")}</button><button type="button" onClick={() => void refreshDiscordStatus()} className={SECONDARY_BUTTON_CLASS}>{t("Check live status")}</button></div>
           <p className="break-words text-xs text-[var(--text-muted)]">{statusText(discordStatus, t)}</p>
         </div>
       </ChannelSection>
@@ -531,8 +567,9 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
         ])}
         <div className="space-y-3">
           <div><label htmlFor="extra-zalo-token" className={LABEL_CLASS}>{t("Zalo Bot Token")}</label><input id="extra-zalo-token" aria-label={t("Zalo Bot Token")} type="password" value={zaloToken} onChange={(event) => setZaloToken(event.target.value)} placeholder={t("Paste Zalo Bot Token")} autoComplete="off" spellCheck={false} className={INPUT_CLASS} /></div>
+          <ChannelProxyInput id="zalo" enabled={zaloProxyEnabled} hasSavedProxy={zaloHasSavedProxy} value={zaloProxy} disabled={zaloBusy} t={t} onEnabledChange={setZaloProxyEnabled} onValueChange={setZaloProxy} />
           {zaloNotice && <StatusMessage type={zaloNotice.type} message={zaloNotice.message} />}
-          <div className="flex flex-wrap gap-2"><button type="button" disabled={zaloBusy || (!zaloToken.trim() && zaloStatus?.configured !== true)} onClick={() => void saveZalo()} className={BUTTON_CLASS}>{zaloBusy ? t("Saving...") : t("Save Zalo Bot settings")}</button><button type="button" onClick={() => void refreshStatus("/setup-api/channels/zalo/status", setZaloStatus)} className={SECONDARY_BUTTON_CLASS}>{t("Check live status")}</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" disabled={zaloBusy || (!zaloToken.trim() && zaloStatus?.configured !== true) || (zaloProxyEnabled && !zaloHasSavedProxy && !zaloProxy.trim())} onClick={() => void saveZalo()} className={BUTTON_CLASS}>{zaloBusy ? t("Saving...") : t("Save Zalo Bot settings")}</button><button type="button" onClick={() => void refreshZaloStatus()} className={SECONDARY_BUTTON_CLASS}>{t("Check live status")}</button></div>
           <p className="break-words text-xs text-[var(--text-muted)]">{statusText(zaloStatus, t)}</p>
         </div>
       </ChannelSection>

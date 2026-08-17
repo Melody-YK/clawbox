@@ -6,7 +6,8 @@ import type { StepStatus, UpdateState } from "@/lib/updater";
 import StatusMessage from "./StatusMessage";
 import CredentialGuide from "./CredentialGuide";
 import ChannelSetupExtras, { type AdditionalChannelId } from "./ChannelSetupExtras";
-import { getLocale, t, tf } from "@/lib/i18n";
+import ChannelProxyInput from "./ChannelProxyInput";
+import type { MessageValues } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
 import { parseAuthInput, tryCloseOAuthWindow } from "@/lib/oauth-utils";
@@ -69,6 +70,8 @@ interface DoneStepProps {
 interface SectionStatusMessage {
   type: "success" | "error";
   message: string;
+  values?: MessageValues;
+  suffix?: string;
   detail?: string;
 }
 
@@ -77,11 +80,21 @@ interface ChannelRuntimeStatus {
   configured?: boolean;
   enabled?: boolean;
   connected?: boolean;
+  reloading?: boolean;
   linked?: boolean;
   running?: boolean;
   errorCode?: string | null;
   lastError?: string | null;
   publicWebhookUrl?: string | null;
+  hasProxy?: boolean;
+  botUsername?: string | null;
+}
+
+interface TelegramPairingRequest {
+  code: string;
+  senderId: string;
+  createdAt: string;
+  displayName: string | null;
 }
 
 type AutoQrChannelId = "feishu" | "qqbot";
@@ -108,11 +121,11 @@ interface ChannelQrSession {
 const MAX_HISTORY = 30;
 
 const RESET_STEPS = [
-  "Clearing configuration...",
-  "Removing credentials...",
-  "Finalizing...",
-  "Restarting device...",
-];
+  "reset_clearing_configuration",
+  "reset_removing_credentials",
+  "reset_finalizing",
+  "reset_restarting_device",
+] as const;
 
 const INPUT_CLASS =
   "w-full min-w-0 px-3.5 py-2.5 bg-[var(--bg-deep)] border border-gray-600 rounded-lg text-sm text-gray-200 outline-none focus:border-[var(--coral-bright)] transition-colors placeholder-gray-500";
@@ -138,11 +151,11 @@ const WIDGET_LABEL_CLASS =
   "text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider";
 
 const AI_PROVIDERS = [
-  { id: "anthropic", name: "Anthropic Claude", hasSubscription: true, placeholder: "sk-ant-api03-...", hint: "Get your API key from console.anthropic.com", tokenUrl: "https://console.anthropic.com/settings/keys" },
-  { id: "openai", name: "OpenAI GPT", hasSubscription: true, placeholder: "sk-...", hint: "Get your API key from platform.openai.com", tokenUrl: "https://platform.openai.com/api-keys" },
-  { id: "google", name: "Google Gemini", hasSubscription: true, placeholder: "AIza...", hint: "Get your API key from Google AI Studio.", tokenUrl: "https://aistudio.google.com/apikey" },
-  { id: "openrouter", name: "OpenRouter", hasSubscription: false, placeholder: "sk-or-v1-...", hint: "Get your API key from OpenRouter.", tokenUrl: "https://openrouter.ai/keys" },
-  { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hint: "Get your API key from platform.deepseek.com", tokenUrl: "https://platform.deepseek.com/api_keys" },
+  { id: "anthropic", name: "Anthropic Claude", hasSubscription: true, placeholder: "sk-ant-api03-...", hintKey: "get_anthropic_api_key", tokenUrl: "https://console.anthropic.com/settings/keys" },
+  { id: "openai", name: "OpenAI GPT", hasSubscription: true, placeholder: "sk-...", hintKey: "get_openai_api_key", tokenUrl: "https://platform.openai.com/api-keys" },
+  { id: "google", name: "Google Gemini", hasSubscription: true, placeholder: "AIza...", hintKey: "get_google_api_key", tokenUrl: "https://aistudio.google.com/apikey" },
+  { id: "openrouter", name: "OpenRouter", hasSubscription: false, placeholder: "sk-or-v1-...", hintKey: "get_openrouter_api_key", tokenUrl: "https://openrouter.ai/keys" },
+  { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hintKey: "get_deepseek_api_key", tokenUrl: "https://platform.deepseek.com/api_keys" },
 ] as const;
 
 type ConfigurableChatChannelId = "feishu" | "qqbot" | "telegram" | "whatsapp" | "line" | "wecom";
@@ -366,6 +379,7 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function SectionBadge({ done }: { done: boolean }) {
+  const { t } = useI18n();
   if (done) {
     return (
       <span className="ml-auto flex items-center gap-1.5 text-[10px] font-semibold text-[#00e5cc] uppercase tracking-wide">
@@ -401,6 +415,7 @@ function PasswordInput({
   autoComplete?: string;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="relative">
       <input
@@ -417,7 +432,7 @@ function PasswordInput({
       <button
         type="button"
         onClick={onToggle}
-        aria-label={visible ? "Hide" : "Show"}
+        aria-label={visible ? t("hide_password") : t("show_password")}
         disabled={disabled}
         className={`${TOGGLE_BUTTON_CLASS} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
       >
@@ -539,9 +554,10 @@ function UpdateStepIcon({ status }: { status: StepStatus }) {
 }
 
 function UpdateProgressHeading({ phase }: { phase: UpdateState["phase"] | undefined }) {
-  if (phase === "completed") return <span className="text-[#00e5cc]">Update Complete</span>;
-  if (phase === "failed") return <span className="text-red-400">Update Failed</span>;
-  return <>System Update</>;
+  const { t } = useI18n();
+  if (phase === "completed") return <span className="text-[#00e5cc]">{t("update_complete")}</span>;
+  if (phase === "failed") return <span className="text-red-400">{t("update_failed")}</span>;
+  return <>{t("system_update_confirm")}</>;
 }
 
 function isChannelOnline(channel: ChatChannelId, status: ChannelRuntimeStatus | undefined): boolean {
@@ -563,6 +579,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function parseTelegramPairingRequests(payload: unknown): TelegramPairingRequest[] | null {
+  if (!isRecord(payload) || !Array.isArray(payload.requests)) return null;
+  return payload.requests.flatMap((request) => {
+    if (
+      !isRecord(request) ||
+      typeof request.code !== "string" ||
+      typeof request.senderId !== "string" ||
+      typeof request.createdAt !== "string" ||
+      (request.displayName !== undefined && request.displayName !== null && typeof request.displayName !== "string")
+    ) {
+      return [];
+    }
+    return [{
+      code: request.code,
+      senderId: request.senderId,
+      createdAt: request.createdAt,
+      displayName: typeof request.displayName === "string" ? request.displayName : null,
+    }];
+  });
+}
+
 function createQrOwnerToken(): string {
   if (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function") {
     return window.crypto.randomUUID();
@@ -581,31 +618,38 @@ function isValidQrOwnerToken(value: string | null): value is string {
   );
 }
 
-function channelQrErrorMessage(payload: unknown, fallback: string): string {
-  if (!isRecord(payload)) return t(fallback);
-  const errorCode = typeof payload.errorCode === "string" ? payload.errorCode : null;
-  if (errorCode && QR_ERROR_MESSAGES[errorCode]) return t(QR_ERROR_MESSAGES[errorCode]);
-  return t(typeof payload.error === "string" && payload.error ? payload.error : fallback);
-}
-
-function whatsappFailureStatus(
+function failureStatus(
   payload: unknown,
   fallback: string,
+  errorMessages: Readonly<Record<string, string>>,
 ): SectionStatusMessage {
   const value = isRecord(payload) ? payload : {};
   const errorCode = typeof value.errorCode === "string" ? value.errorCode : null;
   const detail = typeof value.error === "string" && value.error.trim()
     ? value.error.trim()
     : null;
-  const message = t(
-    (errorCode && WHATSAPP_ERROR_MESSAGES[errorCode]) || fallback,
-  );
+  const message = (errorCode && errorMessages[errorCode]) || detail || fallback;
 
   return {
     type: "error",
     message,
     ...(detail && detail !== message ? { detail } : {}),
   };
+}
+
+function channelQrFailureStatus(payload: unknown, fallback: string): SectionStatusMessage {
+  return failureStatus(payload, fallback, QR_ERROR_MESSAGES);
+}
+
+function channelQrErrorMessage(payload: unknown, fallback: string): string {
+  return channelQrFailureStatus(payload, fallback).message;
+}
+
+function whatsappFailureStatus(
+  payload: unknown,
+  fallback: string,
+): SectionStatusMessage {
+  return failureStatus(payload, fallback, WHATSAPP_ERROR_MESSAGES);
 }
 
 async function fetchWithTimeout(
@@ -641,6 +685,7 @@ function isTerminalWhatsAppLoginMessage(message: string): boolean {
 }
 
 function DiagnosticDetails({ detail }: { detail: string }) {
+  const { t } = useI18n();
   return (
     <details className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
       <summary className="cursor-pointer font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--coral-bright)]">
@@ -709,12 +754,15 @@ function ChannelStatusSummary({
   channel: ChatChannelId;
   status: ChannelRuntimeStatus | undefined;
 }) {
+  const { t } = useI18n();
   if (!status) {
     return <p className="text-xs text-[var(--text-muted)]">{t("Checking channel status...")}</p>;
   }
 
   const online = isChannelOnline(channel, status);
-  const label = online
+  const label = status.reloading
+    ? t("Gateway is reloading")
+    : online
     ? channel === "line"
       ? t("Active: webhook verified")
       : t("Connected")
@@ -736,9 +784,11 @@ function ChannelStatusSummary({
   const friendlyErrorKey = channel === "whatsapp" && status.errorCode
     ? WHATSAPP_ERROR_MESSAGES[status.errorCode]
     : null;
-  const visibleError = friendlyErrorKey
-    ? t(friendlyErrorKey)
-    : status.lastError;
+  const visibleError = status.reloading
+    ? null
+    : friendlyErrorKey
+      ? t(friendlyErrorKey)
+      : status.lastError;
   const diagnosticDetail = friendlyErrorKey && status.lastError && status.lastError !== visibleError
     ? status.lastError
     : null;
@@ -749,6 +799,82 @@ function ChannelStatusSummary({
       {visibleError && <p className="mt-1 break-words text-[11px] leading-relaxed text-red-300">{visibleError}</p>}
       {diagnosticDetail && <DiagnosticDetails detail={diagnosticDetail} />}
     </div>
+  );
+}
+
+function TelegramPairingPanel({
+  botUsername,
+  connected,
+  requests,
+  loaded,
+  loading,
+  approvingCode,
+  notice,
+  errorDetail,
+  onRefresh,
+  onApprove,
+}: {
+  botUsername: string | null;
+  connected: boolean;
+  requests: TelegramPairingRequest[];
+  loaded: boolean;
+  loading: boolean;
+  approvingCode: string | null;
+  notice: SectionStatusMessage | null;
+  errorDetail: string | null;
+  onRefresh: () => void;
+  onApprove: (code: string) => void;
+}) {
+  const { t } = useI18n();
+  const normalizedUsername = botUsername?.replace(/^@/, "") || null;
+  const botUrl = normalizedUsername && /^[A-Za-z0-9_]{5,}$/.test(normalizedUsername)
+    ? `https://t.me/${normalizedUsername}`
+    : null;
+
+  return (
+    <section className="space-y-3 border-t border-[var(--border-subtle)] pt-4" aria-labelledby="telegram-user-access-title">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4 id="telegram-user-access-title" className="text-sm font-semibold text-[var(--text-secondary)]">{t("Telegram user access")}</h4>
+          <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("First-time users must open the bot, send a message, and then be approved here before chatting.")}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {botUrl && (
+            <a href={botUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-gray-600 px-3 py-2 text-xs font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">
+              {t("Open Telegram bot")}
+            </a>
+          )}
+          <button type="button" onClick={onRefresh} disabled={!connected || loading} className="rounded-lg border border-gray-600 px-3 py-2 text-xs font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50">
+            {loading ? t("Checking pairing requests...") : t("Refresh pairing requests")}
+          </button>
+        </div>
+      </div>
+
+      {!connected && (
+        <p className="text-xs leading-relaxed text-amber-300">{t("Connect Telegram before checking user pairing requests.")}</p>
+      )}
+      {connected && loaded && !loading && requests.length === 0 && !errorDetail && (
+        <p className="text-xs leading-relaxed text-[var(--text-muted)]">{t("No pending Telegram pairing requests.")}</p>
+      )}
+
+      {requests.map((request) => (
+        <div key={request.code} className="flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-deep)]/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <p className="break-words text-xs font-semibold text-[var(--text-primary)]">
+              {request.displayName || t("Telegram user")}
+            </p>
+            <p className="break-all text-[11px] text-[var(--text-muted)]">{t("User ID")}: {request.senderId}</p>
+            <p className="break-all text-[11px] text-[var(--text-muted)]">{t("Pairing code")}: <code className="text-[#00e5cc]">{request.code}</code></p>
+          </div>
+          <button type="button" onClick={() => onApprove(request.code)} disabled={!connected || approvingCode !== null} className={`${SAVE_BUTTON_CLASS} shrink-0 disabled:cursor-not-allowed disabled:opacity-50`}>
+            {approvingCode === request.code ? t("Approving...") : t("Approve user")}
+          </button>
+        </div>
+      ))}
+
+      {notice && <StatusMessage type={notice.type} message={notice.message} values={notice.values} suffix={notice.suffix} />}
+      {errorDetail && <DiagnosticDetails detail={errorDetail} />}
+    </section>
   );
 }
 
@@ -771,6 +897,7 @@ function ChannelQrSetupPanel({
   onCancel: () => void;
   onSaveDisabled: () => void;
 }) {
+  const { t, translateText } = useI18n();
   const pending = session?.status === "pending" || session?.status === "expired";
   const saving = session?.status === "saving";
   const statusText = session?.status === "pending"
@@ -786,7 +913,7 @@ function ChannelQrSetupPanel({
           : session?.status === "cancelled"
             ? t("QR setup cancelled.")
             : session?.status === "error"
-              ? channelQrErrorMessage(session, "Unable to complete QR setup.")
+              ? translateText(channelQrErrorMessage(session, "Unable to complete QR setup."))
               : t("No App ID or App Secret is required when you use QR setup.");
   const statusColor = session?.status === "connected"
     ? "text-[#00e5cc]"
@@ -874,7 +1001,8 @@ function LegacyChannelCredentialGuide({
 }: {
   channel: Exclude<ChatChannelId, "wechat">;
 }) {
-  const zh = getLocale().startsWith("zh");
+  const { locale } = useI18n();
+  const zh = locale.startsWith("zh");
   const securityLabel = zh ? "请妥善保管凭据：" : "Keep credentials private:";
   const securityNote = zh
     ? "不要把 Token、Secret、截图或聊天记录提交到 GitHub。"
@@ -990,6 +1118,7 @@ function ChannelCredentialGuide({
 }: {
   channel: ConfigurableChatChannelId;
 }) {
+  const { t } = useI18n();
   const securityNote = t("Never commit credentials, QR codes, screenshots, or chat logs to GitHub.");
   const props = {
     securityLabel: t("Keep credentials private:"),
@@ -1004,6 +1133,7 @@ function ChannelCredentialGuide({
         <><a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>{t(" Telegram step 1")}</>,
         <>{t("Telegram step 2")}</>,
         <>{t("Telegram step 3")}</>,
+        <>{t("Telegram step 4")}</>,
       ]}
     />;
   }
@@ -1070,8 +1200,7 @@ function ChannelCredentialGuide({
 }
 
 export default function DoneStep({ setupComplete = false }: DoneStepProps) {
-  const { locale } = useI18n();
-  void locale;
+  const { t } = useI18n();
   /* ── System info ── */
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -1171,6 +1300,15 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [channelSaving, setChannelSaving] = useState<ConfigurableChatChannelId | null>(null);
   const [channelStatuses, setChannelStatuses] = useState<Record<string, SectionStatusMessage>>({});
   const [channelRuntimeStatuses, setChannelRuntimeStatuses] = useState<Partial<Record<ConfigurableChatChannelId, ChannelRuntimeStatus>>>({});
+  const [telegramProxyEnabled, setTelegramProxyEnabled] = useState(false);
+  const [telegramProxy, setTelegramProxy] = useState("");
+  const [telegramHasSavedProxy, setTelegramHasSavedProxy] = useState(false);
+  const [telegramPairingRequests, setTelegramPairingRequests] = useState<TelegramPairingRequest[]>([]);
+  const [telegramPairingLoaded, setTelegramPairingLoaded] = useState(false);
+  const [telegramPairingLoading, setTelegramPairingLoading] = useState(false);
+  const [telegramPairingApprovingCode, setTelegramPairingApprovingCode] = useState<string | null>(null);
+  const [telegramPairingNotice, setTelegramPairingNotice] = useState<SectionStatusMessage | null>(null);
+  const [telegramPairingErrorDetail, setTelegramPairingErrorDetail] = useState<string | null>(null);
   const [additionalChannelStatuses, setAdditionalChannelStatuses] = useState<Partial<Record<AdditionalChannelId, ChannelRuntimeStatus>>>({});
   const [channelQrSessions, setChannelQrSessions] = useState<Partial<Record<AutoQrChannelId, ChannelQrSession>>>({});
   const [channelQrLoading, setChannelQrLoading] = useState<Partial<Record<AutoQrChannelId, boolean>>>({});
@@ -1223,32 +1361,32 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   const aiOauthLabels: Record<string, { button: string; description: string; success: string; steps: string[]; inputLabel: string; inputPlaceholder: string }> = {
     anthropic: {
-      button: "Connect with Claude",
-      description: "Connect your Claude Pro or Max subscription via OAuth.",
-      success: "Claude subscription connected!",
-      steps: ["Authorize in the browser tab.", "Copy the authorization code.", "Paste it below."],
-      inputLabel: "Authorization Code",
-      inputPlaceholder: "Paste code here...",
+      button: "connect_with_claude",
+      description: "connect_claude_description",
+      success: "claude_subscription_connected",
+      steps: ["authorize_in_browser", "copy_authorization_code", "paste_it_below"],
+      inputLabel: "authorization_code",
+      inputPlaceholder: "paste_code_here",
     },
     openai: {
-      button: "Connect to GPT",
-      description: "Connect your ChatGPT Plus or Pro subscription via OAuth.",
-      success: "GPT subscription connected!",
+      button: "connect_to_gpt",
+      description: "connect_gpt_description",
+      success: "gpt_subscription_connected",
       steps: [
-        "Sign in and authorize in the browser tab.",
-        "After approval, the page will redirect to a URL that won\u2019t load \u2014 this is expected.",
-        "Copy the full URL from the address bar and paste it below.",
+        "sign_in_authorize_browser",
+        "redirect_expected",
+        "copy_full_url",
       ],
-      inputLabel: "Callback URL",
-      inputPlaceholder: "Paste the full URL here...",
+      inputLabel: "callback_url",
+      inputPlaceholder: "paste_full_url_here",
     },
     google: {
-      button: "Connect to Gemini",
-      description: "Connect your Google Gemini subscription via OAuth.",
-      success: "Gemini subscription connected!",
-      steps: ["Sign in with your Google account in the browser tab.", "Copy the authorization code shown after approval.", "Paste it below."],
-      inputLabel: "Authorization Code",
-      inputPlaceholder: "Paste code here...",
+      button: "connect_to_gemini",
+      description: "connect_gemini_description",
+      success: "gemini_subscription_connected",
+      steps: ["sign_in_google", "copy_google_code", "paste_it_below"],
+      inputLabel: "authorization_code",
+      inputPlaceholder: "paste_code_here",
     },
   };
   const currentAiOAuth = aiOauthLabels[aiProvider] ?? aiOauthLabels.anthropic;
@@ -1291,9 +1429,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         } else if (data.wifi_connecting) {
           setWifiStatus({
             type: "success",
-            message: tf("wifi_switching_status", {
-              ssid: data.wifi_target_ssid ?? t("selected_wifi"),
-            }),
+            message: data.wifi_target_ssid
+              ? "wifi_switching_status"
+              : "wifi_switching_selected_status",
+            ...(data.wifi_target_ssid
+              ? { values: { ssid: data.wifi_target_ssid } }
+              : {}),
           });
         } else if (data.wifi_configured) {
           setWifiStatus((prev) =>
@@ -1352,6 +1493,76 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     setWechatDone(connected);
     return data as { enabled?: boolean; connected?: boolean; accountIds?: string[] };
   }, []);
+
+  const refreshTelegramPairingRequests = useCallback(async (signal?: AbortSignal) => {
+    setTelegramPairingLoading(true);
+    setTelegramPairingNotice(null);
+    setTelegramPairingErrorDetail(null);
+    try {
+      const response = await fetch("/setup-api/channels/telegram/pairing", {
+        signal,
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (signal?.aborted) return;
+      const requests = parseTelegramPairingRequests(payload);
+      if (!response.ok || requests === null) {
+        const detail = isRecord(payload) && typeof payload.error === "string"
+          ? payload.error
+          : response.ok
+            ? "The server returned an invalid Telegram pairing response."
+            : `HTTP ${response.status}`;
+        setTelegramPairingRequests([]);
+        setTelegramPairingLoaded(true);
+        setTelegramPairingNotice({ type: "error", message: "Unable to load Telegram pairing requests." });
+        setTelegramPairingErrorDetail(detail);
+        return;
+      }
+      setTelegramPairingRequests(requests);
+      setTelegramPairingLoaded(true);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setTelegramPairingRequests([]);
+      setTelegramPairingLoaded(true);
+      setTelegramPairingNotice({ type: "error", message: "Unable to load Telegram pairing requests." });
+      setTelegramPairingErrorDetail(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (!signal?.aborted) setTelegramPairingLoading(false);
+    }
+  }, []);
+
+  const approveTelegramPairingRequest = useCallback(async (code: string) => {
+    if (telegramPairingApprovingCode !== null) return;
+    setTelegramPairingApprovingCode(code);
+    setTelegramPairingNotice(null);
+    setTelegramPairingErrorDetail(null);
+    try {
+      const response = await fetch("/setup-api/channels/telegram/pairing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!response.ok) {
+        const detail = isRecord(payload) && typeof payload.error === "string"
+          ? payload.error
+          : `HTTP ${response.status}`;
+        setTelegramPairingNotice({ type: "error", message: "Unable to approve Telegram user." });
+        setTelegramPairingErrorDetail(detail);
+        return;
+      }
+      setTelegramPairingRequests((current) => current.filter((request) => request.code !== code));
+      setTelegramPairingNotice({
+        type: "success",
+        message: "Telegram user approved. Return to Telegram and send a new message.",
+      });
+    } catch (error) {
+      setTelegramPairingNotice({ type: "error", message: "Unable to approve Telegram user." });
+      setTelegramPairingErrorDetail(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTelegramPairingApprovingCode(null);
+    }
+  }, [telegramPairingApprovingCode]);
 
   const refreshChannelRuntimeStatus = useCallback(async (
     channel: ConfigurableChatChannelId,
@@ -1423,6 +1634,17 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     }
   }, []);
 
+  const checkChannelStatus = useCallback(async (channel: ConfigurableChatChannelId) => {
+    if (channel === "telegram") {
+      await Promise.all([
+        refreshChannelRuntimeStatus(channel),
+        refreshTelegramPairingRequests(),
+      ]);
+      return;
+    }
+    await refreshChannelRuntimeStatus(channel);
+  }, [refreshChannelRuntimeStatus, refreshTelegramPairingRequests]);
+
   const refreshAllChannelRuntimeStatuses = useCallback(async (signal?: AbortSignal) => {
     await Promise.all(CONFIGURABLE_CHAT_CHANNELS.map((channel) => refreshChannelRuntimeStatus(channel, signal)));
   }, [refreshChannelRuntimeStatus]);
@@ -1479,10 +1701,20 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         if (!data?.channels || controller.signal.aborted) return;
         setChannelConfigs((current) => ({ ...current, ...data.channels }));
         if (data.channels.feishu?.domain === "lark") setFeishuDomain("lark");
+        const hasTelegramProxy = data.channels.telegram?.has_proxy === true;
+        setTelegramHasSavedProxy(hasTelegramProxy);
+        setTelegramProxyEnabled(hasTelegramProxy);
       })
       .catch(() => {});
     return () => controller.abort();
   }, [refreshAllAdditionalChannelStatuses, refreshAllChannelRuntimeStatuses, refreshWechatState]);
+
+  useEffect(() => {
+    if (activeChatChannel !== "telegram" || channelRuntimeStatuses.telegram?.connected !== true) return;
+    const controller = new AbortController();
+    void refreshTelegramPairingRequests(controller.signal);
+    return () => controller.abort();
+  }, [activeChatChannel, channelRuntimeStatuses.telegram?.connected, refreshTelegramPairingRequests]);
 
   const updateChannelField = (channel: ConfigurableChatChannelId, field: string, value: string | boolean) => {
     setChannelConfigs((current) => ({ ...current, [channel]: { ...(current[channel] || {}), [field]: value } }));
@@ -1556,6 +1788,11 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (channel === "wecom") {
         config.connectionMode = "websocket";
       }
+      if (channel === "telegram") {
+        const proxy = telegramProxy.trim();
+        if (telegramProxyEnabled && proxy) config.proxy = proxy;
+        if (!telegramProxyEnabled && telegramHasSavedProxy) config.removeProxy = true;
+      }
       const response = await fetch(`/setup-api/channels/${channel}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1566,28 +1803,42 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         errorCode?: string;
         error?: string;
       };
-      const backendError = channelQrErrorMessage(data, "Unable to save channel settings.");
       const statusMessage = response.ok
-        ? t("Channel settings saved. The gateway is reloading.")
+        ? { type: "success" as const, message: "Channel settings saved. The gateway is reloading." }
         : data.saved === true
-          ? `${t("Channel settings saved. The gateway is reloading.")} ${data.error ? t(data.error) : t("The channel is not online yet.")}`
-          : backendError;
+          ? {
+              type: "error" as const,
+              message: "Channel settings saved. The gateway is reloading.",
+              suffix: data.error || "The channel is not online yet.",
+            }
+          : channelQrFailureStatus(data, "Unable to save channel settings.");
       setChannelStatuses((current) => ({
         ...current,
-        [channel]: { type: response.ok ? "success" : "error", message: statusMessage },
+        [channel]: statusMessage,
       }));
       if (typeof data.state === "string") {
         setChannelRuntimeStatuses((current) => ({ ...current, [channel]: data }));
       }
+      if (channel === "telegram" && (response.ok || data.saved === true) && typeof data.hasProxy === "boolean") {
+        setTelegramHasSavedProxy(data.hasProxy);
+        setTelegramProxyEnabled(data.hasProxy);
+        setTelegramProxy("");
+      }
       if (response.ok) {
-        window.setTimeout(() => void refreshChannelRuntimeStatus(channel), 1000);
+        const delays = channel === "telegram" && data.reloading
+          ? [5_000, 15_000, 30_000, 50_000]
+          : [1_000];
+        for (const delay of delays) {
+          window.setTimeout(() => void refreshChannelRuntimeStatus(channel), delay);
+        }
       }
     } catch (error) {
       setChannelStatuses((current) => ({
         ...current,
         [channel]: {
           type: "error",
-          message: `${t("Unable to save channel settings.")}: ${error instanceof Error ? error.message : error}`,
+          message: "Unable to save channel settings.",
+          detail: error instanceof Error ? error.message : String(error),
         },
       }));
     } finally {
@@ -1644,17 +1895,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (signal?.aborted || !isLatestRequest()) return;
       const session = storeChannelQrSession(channel, payload);
       if (!response.ok) {
-        const error = channelQrErrorMessage(payload, "Unable to check QR setup status.");
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "error", message: error },
+          [channel]: channelQrFailureStatus(payload, "Unable to check QR setup status."),
         }));
         return;
       }
       if (session?.status === "connected") {
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "success", message: t("QR setup completed and the channel is connected.") },
+          [channel]: { type: "success", message: "QR setup completed and the channel is connected." },
         }));
         if (!isLatestRequest()) return;
         await Promise.all([
@@ -1664,7 +1914,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       } else if (session?.status === "error") {
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "error", message: channelQrErrorMessage(session, "Unable to complete QR setup.") },
+          [channel]: channelQrFailureStatus(session, "Unable to complete QR setup."),
         }));
       }
     } catch (error) {
@@ -1673,7 +1923,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         ...current,
         [channel]: {
           type: "error",
-          message: `${t("Unable to check QR setup status.")}: ${error instanceof Error ? error.message : error}`,
+          message: "Unable to check QR setup status.",
+          detail: error instanceof Error ? error.message : String(error),
         },
       }));
     } finally {
@@ -1685,7 +1936,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     if (!canConfigureWechat) {
       setChannelStatuses((current) => ({
         ...current,
-        [channel]: { type: "error", message: t("Configure an AI provider before setting up chat channels.") },
+        [channel]: { type: "error", message: "Configure an AI provider before setting up chat channels." },
       }));
       return;
     }
@@ -1712,17 +1963,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (!isLatestRequest()) return;
       const session = storeChannelQrSession(channel, payload);
       if (!response.ok) {
-        const error = channelQrErrorMessage(payload, "Unable to generate a QR code.");
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "error", message: error },
+          [channel]: channelQrFailureStatus(payload, "Unable to generate a QR code."),
         }));
         return;
       }
       if (!session) {
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "error", message: t("The server did not return a QR setup session.") },
+          [channel]: { type: "error", message: "The server did not return a QR setup session." },
         }));
       } else if (session.status === "connected") {
         await Promise.all([
@@ -1736,7 +1986,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         ...current,
         [channel]: {
           type: "error",
-          message: `${t("Unable to generate a QR code.")}: ${error instanceof Error ? error.message : error}`,
+          message: "Unable to generate a QR code.",
+          detail: error instanceof Error ? error.message : String(error),
         },
       }));
     } finally {
@@ -1770,10 +2021,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (!isLatestRequest()) return;
       const session = storeChannelQrSession(channel, payload);
       if (!response.ok) {
-        const error = channelQrErrorMessage(payload, "Unable to cancel QR setup.");
         setChannelStatuses((current) => ({
           ...current,
-          [channel]: { type: "error", message: error },
+          [channel]: channelQrFailureStatus(payload, "Unable to cancel QR setup."),
         }));
       } else if (session?.status === "cancelled") {
         setChannelStatuses((current) => {
@@ -1788,7 +2038,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         ...current,
         [channel]: {
           type: "error",
-          message: `${t("Unable to cancel QR setup.")}: ${error instanceof Error ? error.message : error}`,
+          message: "Unable to cancel QR setup.",
+          detail: error instanceof Error ? error.message : String(error),
         },
       }));
     } finally {
@@ -1886,7 +2137,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           ...current,
           whatsapp: {
             type: "success",
-            message: t("WhatsApp is linked. Checking the live connection now."),
+            message: "WhatsApp is linked. Checking the live connection now.",
           },
         }));
         await refreshChannelRuntimeStatus("whatsapp");
@@ -1907,7 +2158,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         ...current,
         whatsapp: {
           type: "success",
-          message: t("QR code is ready. Scan it from WhatsApp Linked devices; this page will confirm the connection automatically."),
+           message: "QR code is ready. Scan it from WhatsApp Linked devices; this page will confirm the connection automatically.",
         },
       }));
     } catch (error) {
@@ -1981,9 +2232,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           setWhatsappQrDataUrl(null);
           setChannelStatuses((current) => ({
             ...current,
-            whatsapp: {
-              type: "success",
-              message: t("WhatsApp is linked. Checking the live connection now."),
+          whatsapp: {
+            type: "success",
+            message: "WhatsApp is linked. Checking the live connection now.",
             },
           }));
           await refreshChannelRuntimeStatus("whatsapp");
@@ -1994,9 +2245,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           setWhatsappQrDataUrl(data.qrDataUrl);
           setChannelStatuses((current) => ({
             ...current,
-            whatsapp: {
-              type: "success",
-              message: t("The WhatsApp QR code was refreshed automatically. Scan the latest code."),
+          whatsapp: {
+            type: "success",
+            message: "The WhatsApp QR code was refreshed automatically. Scan the latest code.",
             },
           }));
           return;
@@ -2047,7 +2298,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     if (!canConfigureWechat) {
       setChannelStatuses((current) => ({
         ...current,
-        whatsapp: { type: "error", message: t("Configure an AI provider before setting up chat channels.") },
+        whatsapp: { type: "error", message: "Configure an AI provider before setting up chat channels." },
       }));
       return;
     }
@@ -2102,13 +2353,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         setChannelRuntimeStatuses((current) => ({ ...current, whatsapp: data }));
         setChannelStatuses((current) => ({
           ...current,
-          whatsapp: { type: "success", message: t("WhatsApp is disabled.") },
+           whatsapp: { type: "success", message: "WhatsApp is disabled." },
         }));
         return;
       }
       setChannelStatuses((current) => ({
         ...current,
-        whatsapp: { type: "success", message: t("WhatsApp is prepared. Generating a QR code now.") },
+        whatsapp: { type: "success", message: "WhatsApp is prepared. Generating a QR code now." },
       }));
       await requestWhatsAppQr();
     } catch (error) {
@@ -2349,20 +2600,20 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const saveSecurity = async () => {
     if (password || confirmPassword) {
       if (password.length < 8) {
-        setSecStatus({ type: "error", message: "Password must be at least 8 characters" });
+        setSecStatus({ type: "error", message: "password_min_error" });
         return;
       }
       if (password !== confirmPassword) {
-        setSecStatus({ type: "error", message: "Passwords do not match" });
+        setSecStatus({ type: "error", message: "password_mismatch_error" });
         return;
       }
     }
     if (hotspotEnabled && !hotspotName.trim()) {
-      setSecStatus({ type: "error", message: "Hotspot name is required" });
+      setSecStatus({ type: "error", message: "hotspot_name_required_error" });
       return;
     }
     if (hotspotPassword && hotspotPassword.length < 8) {
-      setSecStatus({ type: "error", message: "Hotspot password must be at least 8 characters" });
+      setSecStatus({ type: "error", message: "hotspot_password_min_error" });
       return;
     }
 
@@ -2377,7 +2628,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          setSecStatus({ type: "error", message: data.error || "Failed to set password" });
+          setSecStatus({
+            type: "error",
+            message: data.error || "set_password_failed",
+          });
           return;
         }
       }
@@ -2392,17 +2646,21 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
       if (!hotspotRes.ok) {
         const data = await hotspotRes.json().catch(() => ({}));
-        setSecStatus({ type: "error", message: data.error || "Failed to save hotspot settings" });
+        setSecStatus({
+          type: "error",
+          message: data.error || "hotspot_save_failed",
+        });
         return;
       }
-      setSecStatus({ type: "success", message: "Settings saved!" });
+      setSecStatus({ type: "success", message: "settings_saved" });
       if (password) setSecurityDone(true);
       setPassword("");
       setConfirmPassword("");
     } catch (err) {
       setSecStatus({
         type: "error",
-        message: `Failed: ${err instanceof Error ? err.message : err}`,
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       setSecSaving(false);
@@ -2413,7 +2671,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     if (!canConfigureWechat) {
       setWechatStatus({
         type: "error",
-        message: "Configure your AI provider before setting up WeChat.",
+        message: "wechat_ai_required",
       });
       return;
     }
@@ -2428,7 +2686,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) {
-        setWechatStatus({ type: "error", message: data.error || "Failed to save" });
+        setWechatStatus({
+          type: "error",
+          message: data.error || "wechat_save_failed",
+        });
         return;
       }
       const connected = data.connected === true;
@@ -2436,13 +2697,14 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       setWechatStatus({
         type: "success",
         message: connected
-          ? "WeChat bot settings saved and channel is connected."
-          : "WeChat bot settings saved. Use QR login to complete channel connection.",
+          ? "wechat_saved_connected"
+          : "wechat_saved_use_qr",
       });
     } catch (err) {
       setWechatStatus({
         type: "error",
-        message: `Failed: ${err instanceof Error ? err.message : err}`,
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       setWechatSaving(false);
@@ -2461,7 +2723,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             await refreshWechatState().catch(() => {});
             setWechatStatus({
               type: "success",
-              message: `WeChat connected${s.accountIds?.[0] ? ` (account: ${s.accountIds[0]})` : ""}.`,
+              message: s.accountIds?.[0]
+                ? "wechat_connected_account"
+                : "wechat_connected",
+              ...(s.accountIds?.[0]
+                ? { values: { account: s.accountIds[0] } }
+                : {}),
             });
             return true;
           }
@@ -2478,16 +2745,14 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     if (!canConfigureWechat) {
       setWechatStatus({
         type: "error",
-        message: "Configure your AI provider before setting up WeChat.",
+        message: "wechat_ai_required",
       });
       return;
     }
 
       // 如果已有连接，先提示用户
     if (wechatDone) {
-      const confirm = window.confirm(
-        "WeChat is already connected. Getting a new QR code will disconnect the existing connection. Continue?"
-      );
+      const confirm = window.confirm(t("wechat_reconnect_confirm"));
       if (!confirm) return;
     }
   
@@ -2499,10 +2764,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     const applyQr = (qrUrl: string) => {
       setWechatQrUrl(qrUrl);
       setWechatLinkCopied(false);
-      setWechatStatus({
-        type: "success",
-        message: "QR code refreshed. Please scan now, then click Check status.",
-      });
+      setWechatStatus({ type: "success", message: "wechat_qr_refreshed" });
     };
 
     try {
@@ -2521,13 +2783,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       }
 
       if (!(res.status === 202 && data?.pending)) {
-        setWechatStatus({ type: "error", message: data.error || "Failed to refresh QR code" });
+        setWechatStatus({
+          type: "error",
+          message: data.error || "wechat_qr_refresh_failed",
+        });
         return;
       }
 
       setWechatStatus({
         type: "success",
-        message: "Generating a fresh QR code… please wait a few seconds.",
+        message: "wechat_qr_generating",
       });
 
       const deadline = Date.now() + 75_000;
@@ -2546,12 +2811,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
       setWechatStatus({
         type: "error",
-        message: "Still generating QR code. Please click Refresh QR once more.",
+        message: "wechat_qr_still_generating",
       });
     } catch (err) {
       setWechatStatus({
         type: "error",
-        message: `Failed: ${err instanceof Error ? err.message : err}`,
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       setWechatQrLoading(false);
@@ -2560,18 +2826,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   const openWechatMcpLink = () => {
     if (!wechatQrUrl) {
-      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      setWechatStatus({ type: "error", message: "wechat_qr_required" });
       return;
     }
     setWechatStatus({
       type: "success",
-      message: "Opening WeChat login link. After authorization, return to this page and click 'Check Status'.",
+      message: "wechat_opening_link",
     });
     window.location.href = wechatQrUrl;
   };
   const copyWechatMcpLink = async () => {
     if (!wechatQrUrl) {
-      setWechatStatus({ type: "error", message: "Please click Get QR first." });
+      setWechatStatus({ type: "error", message: "wechat_qr_required" });
       return;
     }
 
@@ -2579,7 +2845,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       setWechatLinkCopied(true);
       setWechatStatus({
         type: "success",
-        message: "Link copied. Open WeChat and paste the link in any chat, then tap it to authorize.",
+        message: "wechat_link_copied",
       });
     };
 
@@ -2611,18 +2877,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     } catch {
       setWechatStatus({
         type: "error",
-        message: "Copy failed in current webview. Use 'Open QR link' below, or manually select and copy the URL text box.",
+        message: "wechat_copy_failed",
       });
     }
   };
 
   const verifyWechatNow = async () => {
-    setWechatStatus({ type: "success", message: "Checking WeChat connection status..." });
+    setWechatStatus({ type: "success", message: "wechat_checking" });
     const ok = await waitWechatConnected(12_000);
     if (!ok) {
       setWechatStatus({
         type: "error",
-        message: "Not connected yet. Complete authorization in WeChat, then click Check Status again.",
+        message: "wechat_not_connected",
       });
     }
   };
@@ -2673,25 +2939,33 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!saveRes.ok) {
         const data = await saveRes.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Failed to save token" });
+        setAiStatus({ type: "error", message: data.error || "failed_to_save_token" });
         return;
       }
       const saveData = await saveRes.json();
       if (controller.signal.aborted) return;
       if (saveData.success) {
         const { closeHint } = tryCloseOAuthWindow(oauthWindowRef);
-        setAiStatus({ type: "success", message: "GPT subscription connected!" + closeHint });
+        setAiStatus({
+          type: "success",
+          message: "gpt_subscription_connected",
+          ...(closeHint ? { suffix: closeHint.trim() } : {}),
+        });
         setProviderDone(true);
         setProviderName(aiProvider);
         setDeviceCode(null);
         setDeviceUrl(null);
         setTimeout(() => { setAiStatus(null); }, 1500);
       } else {
-        setAiStatus({ type: "error", message: saveData.error || "Failed to save token" });
+        setAiStatus({ type: "error", message: saveData.error || "failed_to_save_token" });
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setAiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     } finally {
       if (!controller.signal.aborted) setDeviceSaving(false);
     }
@@ -2711,7 +2985,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         stopDevicePolling();
-        setAiStatus({ type: "error", message: data.error || "Polling failed" });
+        setAiStatus({ type: "error", message: data.error || "ai_polling_failed" });
         return;
       }
       const data = await res.json();
@@ -2755,7 +3029,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Failed to start device auth" });
+        setAiStatus({ type: "error", message: data.error || "ai_device_auth_failed" });
         return;
       }
       const data = await res.json();
@@ -2767,17 +3041,21 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         const interval = data.interval || 5;
         devicePollRef.current = setTimeout(() => pollDeviceAuth(interval), interval * 1000);
       } else {
-        setAiStatus({ type: "error", message: "Unexpected response from device auth" });
+        setAiStatus({ type: "error", message: "ai_unexpected_device_auth" });
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setAiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     }
   };
 
   const saveAiProvider = async () => {
     if (!aiApiKey.trim()) {
-      setAiStatus({ type: "error", message: "Please enter your API key" });
+      setAiStatus({ type: "error", message: "please_enter_api_key" });
       return;
     }
 
@@ -2791,29 +3069,33 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       const res = await fetch("/setup-api/ai-models/configure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: aiProvider, apiKey: aiApiKey.trim(), authMode: aiAuthMode }),
+        body: JSON.stringify({ provider: aiProvider, apiKey: aiApiKey.trim(), authMode: isAiSubscription ? "subscription" : "token" }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Failed to configure" });
+        setAiStatus({ type: "error", message: data.error || "failed_to_configure" });
         return;
       }
       const data = await res.json();
       if (controller.signal.aborted) return;
       if (data.success) {
-        setAiStatus({ type: "success", message: "AI provider configured!" });
+        setAiStatus({ type: "success", message: "ai_provider_configured" });
         setProviderDone(true);
         setProviderName(aiProvider);
         setAiApiKey("");
         setTimeout(() => { setAiStatus(null); }, 1500);
       } else {
-        setAiStatus({ type: "error", message: data.error || "Failed to configure" });
+        setAiStatus({ type: "error", message: data.error || "failed_to_configure" });
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setAiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     } finally {
       if (!controller.signal.aborted) setAiSaving(false);
     }
@@ -2837,7 +3119,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Failed to start OAuth" });
+        setAiStatus({ type: "error", message: data.error || "ai_oauth_start_failed" });
         return;
       }
       const data = await res.json();
@@ -2848,18 +3130,22 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setAiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     }
   };
 
   const exchangeAiCode = async () => {
     if (!aiAuthCode.trim()) {
-      setAiStatus({ type: "error", message: `Please paste the ${currentAiOAuth.inputLabel.toLowerCase()}` });
+      setAiStatus({ type: "error", message: "ai_auth_input_required" });
       return;
     }
     const parsedCode = parseAuthInput(aiAuthCode);
     if (!parsedCode) {
-      setAiStatus({ type: "error", message: "Could not extract authorization code from input" });
+      setAiStatus({ type: "error", message: "ai_code_extract_failed" });
       return;
     }
 
@@ -2879,13 +3165,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!exchangeRes.ok) {
         const data = await exchangeRes.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Token exchange failed" });
+        setAiStatus({ type: "error", message: data.error || "ai_token_exchange_failed" });
         return;
       }
       const tokenData = await exchangeRes.json();
       if (controller.signal.aborted) return;
       if (!tokenData.access_token) {
-        setAiStatus({ type: "error", message: "No access token received" });
+        setAiStatus({ type: "error", message: "ai_no_access_token" });
         return;
       }
       const saveRes = await fetch("/setup-api/ai-models/configure", {
@@ -2897,25 +3183,33 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!saveRes.ok) {
         const data = await saveRes.json().catch(() => ({}));
-        setAiStatus({ type: "error", message: data.error || "Failed to save token" });
+        setAiStatus({ type: "error", message: data.error || "failed_to_save_token" });
         return;
       }
       const saveData = await saveRes.json();
       if (controller.signal.aborted) return;
       if (saveData.success) {
         const { tabClosed, closeHint } = tryCloseOAuthWindow(oauthWindowRef);
-        setAiStatus({ type: "success", message: currentAiOAuth.success + closeHint });
+        setAiStatus({
+          type: "success",
+          message: currentAiOAuth.success,
+          ...(closeHint ? { suffix: closeHint.trim() } : {}),
+        });
         setProviderDone(true);
         setProviderName(aiProvider);
         setAiOauthStarted(false);
         setAiAuthCode("");
         setTimeout(() => { setAiStatus(null); }, tabClosed ? 1500 : 3000);
       } else {
-        setAiStatus({ type: "error", message: saveData.error || "Failed to save token" });
+        setAiStatus({ type: "error", message: saveData.error || "failed_to_save_token" });
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setAiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     } finally {
       if (!controller.signal.aborted) setAiExchanging(false);
     }
@@ -2938,14 +3232,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       }
 
       if (!data || data.scanning) {
-        throw new Error("Scan timed out");
+        setWifiStatus({ type: "error", message: "wifi_scan_timeout" });
+        return;
       }
 
       setWifiNetworks(data.networks || []);
     } catch (err) {
       setWifiStatus({
         type: "error",
-        message: `Scan failed: ${err instanceof Error ? err.message : err}`,
+        message: "wifi_scan_failed_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
       });
     } finally {
       setWifiScanning(false);
@@ -2971,7 +3267,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setWifiStatus({ type: "error", message: data.error || "Connection failed" });
+        setWifiStatus({
+          type: "error",
+          message: data.error || "wifi_connection_failed",
+        });
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -2982,7 +3281,10 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
         message:
           typeof data.message === "string"
             ? data.message
-            : "The device is switching WiFi and waiting for a DHCP address. Reconnect to the same network, then open the device?s .local address in a system browser, or use the IP shown on the screen.",
+            : "wifi_switching_status",
+        ...(typeof data.message === "string"
+          ? {}
+          : { values: { ssid: wifiSSID.trim() } }),
       });
       setWifiConnectedSSID(wifiSSID.trim());
       setWifiSSID("");
@@ -2995,12 +3297,15 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setWifiStatus({
           type: "error",
-          message:
-            "Lost connection. If WiFi switched successfully, reconnect to the same WiFi and open the device?s .local address in a system browser, or use the IP shown on the screen if this client does not resolve .local.",
+          message: "wifi_connection_interrupted",
         });
         return;
       }
-      setWifiStatus({ type: "error", message: `Failed: ${err instanceof Error ? err.message : err}` });
+      setWifiStatus({
+        type: "error",
+        message: "failed_with_detail",
+        values: { detail: err instanceof Error ? err.message : String(err) },
+      });
     } finally {
       if (!controller.signal.aborted) setWifiConnecting(false);
     }
@@ -3102,12 +3407,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       {updateConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="card-surface rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-100 mb-2">System Update</h3>
+            <h3 className="text-lg font-bold text-gray-100 mb-2">{t("system_update_confirm")}</h3>
             <p className="text-sm text-[var(--text-secondary)] mb-4 leading-relaxed">
-              This will pull the latest updates and restart the device. The process may take a few minutes.
+              {t("system_update_description")}
             </p>
             {versionLoading ? (
-              <div className="mb-4 text-xs text-[var(--text-muted)]">Checking versions...</div>
+              <div className="mb-4 text-xs text-[var(--text-muted)]">{t("checking_versions")}</div>
             ) : versionInfo && (
               <div className="mb-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between bg-[var(--bg-deep)] rounded-lg px-3 py-2">
@@ -3122,7 +3427,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 <div className="flex items-center justify-between bg-[var(--bg-deep)] rounded-lg px-3 py-2">
                   <span className="text-[var(--text-secondary)] font-medium">OpenClaw</span>
                   <span className="text-[var(--text-primary)]">
-                    {versionInfo.openclaw.current ?? "not installed"}
+                    {versionInfo.openclaw.current ?? t("not_installed")}
                     {versionInfo.openclaw.target && versionInfo.openclaw.target !== versionInfo.openclaw.current && (
                       <span className="text-[var(--text-muted)]">{" → "}<span className="text-emerald-400">{versionInfo.openclaw.target}</span></span>
                     )}
@@ -3133,7 +3438,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             {/* Branch selector — only visible in dev (non-tag version) or when a branch is pinned */}
             {!versionLoading && (updateBranch || /^v\d+\.\d+\.\d+-.+/.test(versionInfo?.clawbox.current ?? "")) && (
               <div className="mb-4">
-                <label htmlFor="update-branch-input" className="text-xs text-[var(--text-muted)] mb-1 block">Update branch</label>
+                <label htmlFor="update-branch-input" className="text-xs text-[var(--text-muted)] mb-1 block">{t("update_branch")}</label>
                 <div className="flex gap-2">
                   <input
                     id="update-branch-input"
@@ -3149,7 +3454,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     onClick={() => saveUpdateBranch(branchInput)}
                     className="px-3 py-1.5 text-xs font-semibold text-white btn-gradient rounded-lg cursor-pointer disabled:opacity-40"
                   >
-                    {branchSaving ? "..." : "Set"}
+                    {branchSaving ? "..." : t("set")}
                   </button>
                 </div>
                 {branchError && (
@@ -3157,13 +3462,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 )}
                 {updateBranch && (
                   <div className="mt-1 flex items-center gap-2">
-                    <span className="text-xs text-emerald-400">Pinned: {updateBranch}</span>
+                    <span className="text-xs text-emerald-400">{t("pinned")}: {updateBranch}</span>
                     <button
                       type="button"
                       onClick={() => { setBranchInput(""); saveUpdateBranch(""); }}
                       className="text-xs text-red-400 hover:text-red-300 cursor-pointer"
                     >
-                      Unpin
+                      {t("unpin")}
                     </button>
                   </div>
                 )}
@@ -3175,7 +3480,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 onClick={() => setUpdateConfirm(false)}
                 className="flex-1 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-gray-100 transition-colors cursor-pointer"
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 type="button"
@@ -3183,7 +3488,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 disabled={isUpdateRunning}
                 className="flex-1 py-2.5 text-sm font-semibold text-white btn-gradient rounded-lg cursor-pointer disabled:opacity-50"
               >
-                Update Now
+                {t("update_now")}
               </button>
             </div>
           </div>
@@ -3194,9 +3499,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       {betaConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="card-surface rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-100 mb-2">Switch to Beta</h3>
+            <h3 className="text-lg font-bold text-gray-100 mb-2">{t("switch_to_beta")}</h3>
             <p className="text-sm text-[var(--text-secondary)] mb-4 leading-relaxed">
-              This will switch to the beta update channel. Beta versions may contain bugs or incomplete features.
+              {t("beta_update_confirm")}
             </p>
             <div className="flex gap-3">
               <button
@@ -3204,7 +3509,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 onClick={() => setBetaConfirm(false)}
                 className="flex-1 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-gray-100 transition-colors cursor-pointer"
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 type="button"
@@ -3212,7 +3517,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 disabled={isUpdateRunning}
                 className="flex-1 py-2.5 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
               >
-                Switch to Beta
+                {t("switch_to_beta")}
               </button>
             </div>
           </div>
@@ -3223,16 +3528,16 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       {resetConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="card-surface rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-red-400 mb-2">Factory Reset</h3>
+            <h3 className="text-lg font-bold text-red-400 mb-2">{t("factory_reset")}</h3>
             <p className="text-sm text-[var(--text-secondary)] mb-4 leading-relaxed">
-              This will erase all configuration, credentials, and AI model data. The device will restart afterward. Are you sure?
+              {t("factory_reset_confirm")}
             </p>
             {resetting && (
               <div className="mb-4">
                 <div className="w-full h-2 rounded-full bg-[var(--bg-deep)] overflow-hidden mb-2">
                   <div className="h-full bg-[var(--coral-bright)] rounded-full transition-all" style={{ width: `${resetProgress}%` }} />
                 </div>
-                <p className="text-xs text-[var(--text-secondary)]">{RESET_STEPS[resetStep]}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{t(RESET_STEPS[resetStep])}</p>
               </div>
             )}
             <div className="flex gap-3">
@@ -3242,7 +3547,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 disabled={resetting}
                 className="flex-1 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-gray-100 transition-colors cursor-pointer disabled:opacity-50"
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 type="button"
@@ -3250,7 +3555,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 disabled={resetting}
                 className="flex-1 py-2.5 text-sm font-semibold text-white bg-red-500 hover:bg-red-400 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
               >
-                Reset
+                {t("reset")}
               </button>
             </div>
           </div>
@@ -3272,7 +3577,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 <div className="w-full h-2 rounded-full bg-[var(--bg-deep)] overflow-hidden mb-2">
                   <div className="h-full bg-[var(--coral-bright)] rounded-full transition-all" style={{ width: `${updateState.progress}%` }} />
                 </div>
-                <p className="text-xs text-[var(--text-secondary)]">{updateState.status || "Updating..."}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{updateState.status || t("updating_status")}</p>
               </div>
             )}
             {updateState.steps && (
@@ -3291,7 +3596,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 onClick={() => { window.location.reload(); }}
                 className="w-full py-2.5 text-sm font-semibold text-white btn-gradient rounded-lg cursor-pointer"
               >
-                Refresh
+                {t("refresh")}
               </button>
             )}
             {updateState.phase === "failed" && (
@@ -3300,7 +3605,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 onClick={() => { setUpdateStarted(false); setUpdateState(null); }}
                 className="w-full py-2.5 text-sm font-semibold text-white btn-gradient rounded-lg cursor-pointer"
               >
-                Close
+                {t("close")}
               </button>
             )}
           </div>
@@ -3325,7 +3630,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               id="ai-provider-select"
               value={aiProvider}
               onChange={(e) => {
+                const nextProvider = AI_PROVIDERS.find((provider) => provider.id === e.target.value);
                 setAiProvider(e.target.value);
+                if (!nextProvider?.hasSubscription) setAiAuthMode("token");
                 resetAiFields();
               }}
               className={INPUT_CLASS}
@@ -3338,7 +3645,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             </select>
           </div>
 
-          {selectedAiProvider && (
+          {selectedAiProvider?.hasSubscription && (
             <div className="flex flex-wrap gap-4 text-sm text-[var(--text-primary)]">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -3372,7 +3679,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           {isAiSubscription && !useDeviceAuth && (
             <div className="space-y-3">
               <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-                {currentAiOAuth.steps.join(" ")}
+                {currentAiOAuth.steps.map((step) => t(step)).join(" ")}
               </p>
               <button
                 type="button"
@@ -3380,18 +3687,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 disabled={aiOauthStarted}
                 className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}
               >
-                {currentAiOAuth.button}
+                {t(currentAiOAuth.button)}
               </button>
               {aiOauthStarted && (
                 <div className="space-y-2">
                   <label htmlFor="ai-auth-code" className={LABEL_CLASS}>
-                    {currentAiOAuth.inputLabel}
+                    {t(currentAiOAuth.inputLabel)}
                   </label>
                   <textarea
                     id="ai-auth-code"
                     value={aiAuthCode}
                     onChange={(e) => setAiAuthCode(e.target.value)}
-                    placeholder={currentAiOAuth.inputPlaceholder}
+                    placeholder={t(currentAiOAuth.inputPlaceholder)}
                     rows={3}
                     className={`${INPUT_CLASS} min-h-[72px] resize-y`}
                   />
@@ -3402,7 +3709,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}
                   >
                     {aiExchanging && ButtonSpinner}
-                    {aiExchanging ? "Connecting..." : "Complete connection"}
+                    {aiExchanging ? t("connecting") : t("complete_connection")}
                   </button>
                 </div>
               )}
@@ -3412,11 +3719,11 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           {isAiSubscription && useDeviceAuth && (
             <div className="space-y-3">
               <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-                Sign in on another device with the code below, then keep this page open while we connect.
+                {t("sign_in_another_device")}
               </p>
               {!deviceCode ? (
                 <button type="button" onClick={startDeviceAuth} className={SAVE_BUTTON_CLASS}>
-                  Start device login
+                  {t("start_device_login")}
                 </button>
               ) : (
                 <div className="space-y-3 flex flex-col items-center">
@@ -3431,7 +3738,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                       {deviceUrl}
                     </a>
                   )}
-                  {devicePolling && <p className="text-xs text-[var(--text-muted)]">Waiting for authorization…</p>}
+                  {devicePolling && <p className="text-xs text-[var(--text-muted)]">{t("waiting_for_authorization")}</p>}
                   {deviceUrl && (
                     <div className="p-3 bg-white rounded-lg">
                       <QRCodeSVG value={deviceUrl} size={160} level="M" />
@@ -3444,7 +3751,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
           {!isAiSubscription && (
             <div className="space-y-3">
-              <p className="text-xs text-[var(--text-muted)]">{selectedAiProvider?.hint}</p>
+              <p className="text-xs text-[var(--text-muted)]">{selectedAiProvider ? t(selectedAiProvider.hintKey) : null}</p>
               <label htmlFor="ai-api-key" className={LABEL_CLASS}>
                 {t("api_key")}
               </label>
@@ -3477,7 +3784,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
             </div>
           )}
 
-          {aiStatus && <StatusMessage type={aiStatus.type} message={aiStatus.message} />}
+          {aiStatus && <StatusMessage type={aiStatus.type} message={aiStatus.message} values={aiStatus.values} suffix={aiStatus.suffix} />}
         </CollapsibleSection>
 
         {/* Chat channels */}
@@ -3665,7 +3972,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           <p className="text-xs text-[var(--text-muted)]">
             {t("token_fallback_help")}
           </p>
-          {wechatStatus && <StatusMessage type={wechatStatus.type} message={wechatStatus.message} />}
+          {wechatStatus && <StatusMessage type={wechatStatus.type} message={wechatStatus.message} values={wechatStatus.values} />}
           <button type="button" onClick={saveWechat} disabled={wechatSaving || !canConfigureWechat} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{wechatSaving && ButtonSpinner}{wechatSaving ? t("saving") : t("save")}</button>
           </div>
 
@@ -3751,7 +4058,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                   <ChannelStatusSummary channel="whatsapp" status={runtimeStatus} />
                   {channelStatuses.whatsapp && (
                     <>
-                      <StatusMessage type={channelStatuses.whatsapp.type} message={channelStatuses.whatsapp.message} />
+                      <StatusMessage type={channelStatuses.whatsapp.type} message={channelStatuses.whatsapp.message} values={channelStatuses.whatsapp.values} suffix={channelStatuses.whatsapp.suffix} />
                       {channelStatuses.whatsapp.detail && <DiagnosticDetails detail={channelStatuses.whatsapp.detail} />}
                     </>
                   )}
@@ -3774,7 +4081,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     onSaveDisabled={() => void saveChatChannel(channelId)}
                   />
                   <ChannelStatusSummary channel={channelId} status={runtimeStatus} />
-                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
+                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} values={channelStatuses[channelId].values} suffix={channelStatuses[channelId].suffix} />}
 
                   <details className="border-t border-[var(--border-subtle)] pt-3">
                     <summary className="cursor-pointer text-sm font-semibold text-[var(--text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--coral-bright)]">
@@ -3818,6 +4125,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                       <input type={field.secret ? "password" : "text"} value={String(channelConfigs[channelId]?.[field.key] || "")} onChange={(event) => updateChannelField(channelId, field.key, event.target.value)} placeholder={field.placeholder} autoComplete="off" spellCheck={false} disabled={!canConfigureWechat} className={INPUT_CLASS} />
                     </div>
                   ))}
+                  {channelId === "telegram" && (
+                    <ChannelProxyInput
+                      id="telegram"
+                      enabled={telegramProxyEnabled}
+                      hasSavedProxy={telegramHasSavedProxy}
+                      value={telegramProxy}
+                      disabled={!canConfigureWechat || channelSaving === channelId}
+                      t={t}
+                      onEnabledChange={setTelegramProxyEnabled}
+                      onValueChange={setTelegramProxy}
+                    />
+                  )}
                   {channelId === "line" && (
                     runtimeStatus?.publicWebhookUrl ? (
                       <div className="rounded-lg border border-gray-700 bg-[var(--bg-deep)] p-3">
@@ -3829,10 +4148,24 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                     )
                   )}
                   <ChannelStatusSummary channel={channelId} status={runtimeStatus} />
-                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} />}
+                  {channelId === "telegram" && (
+                    <TelegramPairingPanel
+                      botUsername={runtimeStatus?.botUsername || null}
+                      connected={runtimeStatus?.connected === true}
+                      requests={telegramPairingRequests}
+                      loaded={telegramPairingLoaded}
+                      loading={telegramPairingLoading}
+                      approvingCode={telegramPairingApprovingCode}
+                      notice={telegramPairingNotice}
+                      errorDetail={telegramPairingErrorDetail}
+                      onRefresh={() => void refreshTelegramPairingRequests()}
+                      onApprove={(code) => void approveTelegramPairingRequest(code)}
+                    />
+                  )}
+                  {channelStatuses[channelId] && <StatusMessage type={channelStatuses[channelId].type} message={channelStatuses[channelId].message} values={channelStatuses[channelId].values} suffix={channelStatuses[channelId].suffix} />}
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("Saving...") : channelId === "line" ? t("Save and validate") : t("Save and connect")}</button>
-                    <button type="button" onClick={() => void refreshChannelRuntimeStatus(channelId)} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
+                    <button type="button" onClick={() => saveChatChannel(channelId)} disabled={!canConfigureWechat || channelSaving === channelId || (channelId === "telegram" && telegramProxyEnabled && !telegramHasSavedProxy && !telegramProxy.trim())} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{channelSaving === channelId && ButtonSpinner}{channelSaving === channelId ? t("Saving...") : channelId === "line" ? t("Save and validate") : t("Save and connect")}</button>
+                    <button type="button" onClick={() => void checkChannelStatus(channelId)} className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)]">{t("Check status")}</button>
                   </div>
                 </>
               )}
@@ -3927,7 +4260,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               {t("open_wifi_setup")}
             </a>
           </p>
-          {wifiStatus && <StatusMessage type={wifiStatus.type} message={t(wifiStatus.message)} />}
+          {wifiStatus && <StatusMessage type={wifiStatus.type} message={wifiStatus.message} values={wifiStatus.values} />}
           <button
             type="button"
             onClick={connectWifi}
@@ -3997,7 +4330,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
               </div>
             </>
           )}
-          {secStatus && <StatusMessage type={secStatus.type} message={secStatus.message} />}
+          {secStatus && <StatusMessage type={secStatus.type} message={secStatus.message} values={secStatus.values} />}
           <button type="button" onClick={saveSecurity} disabled={secSaving} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{secSaving && ButtonSpinner}{secSaving ? t("saving") : t("save")}</button>
         </CollapsibleSection>
 

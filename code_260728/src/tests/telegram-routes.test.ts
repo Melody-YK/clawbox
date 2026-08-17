@@ -16,6 +16,7 @@ const VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcd";
 
 const getTelegramConfigMock = vi.fn();
 const getTelegramBotTokenMock = vi.fn();
+const getTelegramProxyMock = vi.fn();
 const validateTelegramBotTokenMock = vi.fn();
 const saveTelegramConfigMock = vi.fn();
 const waitForTelegramConnectedMock = vi.fn();
@@ -43,6 +44,10 @@ async function writeSetupConfig(config: Record<string, unknown>): Promise<void> 
   await fs.writeFile(CONFIG_PATH, JSON.stringify(config), "utf-8");
 }
 
+async function readSetupConfig(): Promise<Record<string, unknown>> {
+  return JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8")) as Record<string, unknown>;
+}
+
 beforeAll(async () => {
   process.env.CLAWBOX_ROOT = TEST_ROOT;
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -50,6 +55,7 @@ beforeAll(async () => {
   vi.doMock("@/lib/channels/telegram", () => ({
     getTelegramConfig: getTelegramConfigMock,
     getTelegramBotToken: getTelegramBotTokenMock,
+    getTelegramProxy: getTelegramProxyMock,
     validateTelegramBotToken: validateTelegramBotTokenMock,
     saveTelegramConfig: saveTelegramConfigMock,
     waitForTelegramConnected: waitForTelegramConnectedMock,
@@ -70,6 +76,7 @@ beforeEach(async () => {
   for (const mock of [
     getTelegramConfigMock,
     getTelegramBotTokenMock,
+    getTelegramProxyMock,
     validateTelegramBotTokenMock,
     saveTelegramConfigMock,
     waitForTelegramConnectedMock,
@@ -87,10 +94,12 @@ beforeEach(async () => {
     configured: false,
     enabled: false,
     hasToken: false,
+    hasProxy: false,
     dmPolicy: "pairing",
     groupPolicy: "disabled",
   });
   getTelegramBotTokenMock.mockResolvedValue(null);
+  getTelegramProxyMock.mockResolvedValue(null);
   validateTelegramBotTokenMock.mockResolvedValue({
     id: "123456789",
     username: "clawbox_test_bot",
@@ -100,6 +109,7 @@ beforeEach(async () => {
     configured: true,
     enabled: true,
     hasToken: true,
+    hasProxy: false,
     dmPolicy: "pairing",
     groupPolicy: "disabled",
   });
@@ -109,6 +119,7 @@ beforeEach(async () => {
     configured: true,
     enabled: true,
     hasToken: true,
+    hasProxy: false,
     dmPolicy: "pairing",
     groupPolicy: "disabled",
     connected: true,
@@ -135,6 +146,7 @@ describe("Telegram config route", () => {
       configured: true,
       enabled: true,
       hasToken: true,
+      hasProxy: true,
       dmPolicy: "pairing",
       groupPolicy: "disabled",
     });
@@ -145,6 +157,7 @@ describe("Telegram config route", () => {
 
     expect(response.status).toBe(200);
     expect(body.hasToken).toBe(true);
+    expect(body.hasProxy).toBe(true);
     expect(JSON.stringify(body)).not.toContain("botToken");
     expect(JSON.stringify(body)).not.toContain(VALID_TOKEN);
   });
@@ -185,23 +198,73 @@ describe("Telegram config route", () => {
     expect(saveTelegramConfigMock).not.toHaveBeenCalled();
   });
 
-  it("validates, saves, restarts, and reports a connected bot without echoing the token", async () => {
+  it("validates, saves, restarts, and immediately reports a gateway reload without echoing the token", async () => {
     await writeSetupConfig({ ai_model_configured: true });
 
     const response = await configPost(jsonRequest({ botToken: VALID_TOKEN, enabled: true }));
     const body = await response.json();
+    const setupConfig = await readSetupConfig();
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.connected).toBe(true);
-    expect(validateTelegramBotTokenMock).toHaveBeenCalledWith(VALID_TOKEN);
+    expect(body.state).toBe("configured");
+    expect(body.connected).toBe(false);
+    expect(body.reloading).toBe(true);
+    expect(validateTelegramBotTokenMock).toHaveBeenCalledWith(VALID_TOKEN, expect.any(Function), null);
     expect(saveTelegramConfigMock).toHaveBeenCalledWith({
       botToken: VALID_TOKEN,
       enabled: true,
+      proxy: undefined,
+      removeProxy: false,
     });
     expect(restartGatewayMock).toHaveBeenCalledTimes(1);
-    expect(waitForTelegramConnectedMock).toHaveBeenCalledTimes(1);
+    expect(waitForTelegramConnectedMock).not.toHaveBeenCalled();
+    expect(setupConfig.telegram_reload_started_at).toEqual(expect.any(Number));
+    expect(setupConfig.telegram_last_error).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain(VALID_TOKEN);
+  });
+
+  it("validates an existing token through a newly submitted proxy without echoing it", async () => {
+    const proxy = "http://proxy-user:proxy-password@192.168.1.4:7890";
+    await writeSetupConfig({ ai_model_configured: true });
+    getTelegramBotTokenMock.mockResolvedValue(VALID_TOKEN);
+    saveTelegramConfigMock.mockResolvedValue({
+      configured: true,
+      enabled: true,
+      hasToken: true,
+      hasProxy: true,
+      dmPolicy: "pairing",
+      groupPolicy: "disabled",
+    });
+    waitForTelegramConnectedMock.mockResolvedValue({
+      state: "connected",
+      configured: true,
+      enabled: true,
+      hasToken: true,
+      hasProxy: true,
+      dmPolicy: "pairing",
+      groupPolicy: "disabled",
+      connected: true,
+      running: true,
+      probeOk: true,
+      botId: "123456789",
+      botUsername: "clawbox_test_bot",
+      lastError: null,
+    });
+
+    const response = await configPost(jsonRequest({ proxy, enabled: true }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(validateTelegramBotTokenMock).toHaveBeenCalledWith(VALID_TOKEN, expect.any(Function), proxy);
+    expect(saveTelegramConfigMock).toHaveBeenCalledWith({
+      botToken: undefined,
+      enabled: true,
+      proxy,
+      removeProxy: false,
+    });
+    expect(body.hasProxy).toBe(true);
+    expect(JSON.stringify(body)).not.toContain("proxy-password");
   });
 
   it("returns 502 with saved=true when Gateway restart fails", async () => {
@@ -217,7 +280,7 @@ describe("Telegram config route", () => {
     expect(waitForTelegramConnectedMock).not.toHaveBeenCalled();
   });
 
-  it("returns 502 with saved=true when the channel never becomes online", async () => {
+  it("does not wait for the channel probe after the gateway restart is requested", async () => {
     await writeSetupConfig({ ai_model_configured: true });
     waitForTelegramConnectedMock.mockRejectedValue(
       Object.assign(new Error("Telegram polling did not start"), {
@@ -228,9 +291,10 @@ describe("Telegram config route", () => {
     const response = await configPost(jsonRequest({ botToken: VALID_TOKEN, enabled: true }));
     const body = await response.json();
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(200);
     expect(body.saved).toBe(true);
-    expect(body.error).toContain("polling");
+    expect(body.reloading).toBe(true);
+    expect(waitForTelegramConnectedMock).not.toHaveBeenCalled();
   });
 });
 
@@ -254,6 +318,72 @@ describe("Telegram status and pairing routes", () => {
     expect(response.status).toBe(200);
     expect(body.state).toBe("connected");
     expect(body.botUsername).toBe("clawbox_test_bot");
+  });
+
+  it("treats gateway probe failures as a normal reload during the grace period", async () => {
+    await writeSetupConfig({
+      telegram_reload_started_at: Date.now(),
+      telegram_last_error: "stale error",
+    });
+    probeTelegramChannelMock.mockRejectedValue(
+      new Error("gateway closed (1006 abnormal closure): Gateway not yet ready"),
+    );
+
+    const response = await statusGet();
+    const body = await response.json();
+    const setupConfig = await readSetupConfig();
+
+    expect(response.status).toBe(200);
+    expect(body.state).toBe("configured");
+    expect(body.reloading).toBe(true);
+    expect(body.lastError).toBeNull();
+    expect(JSON.stringify(body)).not.toContain("1006");
+    expect(setupConfig.telegram_last_error).toBeUndefined();
+    expect(setupConfig.telegram_reload_started_at).toEqual(expect.any(Number));
+  });
+
+  it("masks an error status returned while the gateway is reloading", async () => {
+    await writeSetupConfig({ telegram_reload_started_at: Date.now() });
+    probeTelegramChannelMock.mockResolvedValue({
+      state: "error",
+      configured: true,
+      enabled: true,
+      connected: false,
+      running: false,
+      probeOk: false,
+      botUsername: null,
+      botId: null,
+      lastError: "gateway closed (1006 abnormal closure)",
+    });
+
+    const response = await statusGet();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.state).toBe("configured");
+    expect(body.reloading).toBe(true);
+    expect(body.lastError).toBeNull();
+    expect(JSON.stringify(body)).not.toContain("1006");
+  });
+
+  it("reports a real gateway error after the reload grace period expires", async () => {
+    await writeSetupConfig({
+      telegram_reload_started_at: Date.now() - 91_000,
+    });
+    probeTelegramChannelMock.mockRejectedValue(
+      new Error("gateway closed (1006 abnormal closure): Gateway not ready"),
+    );
+
+    const response = await statusGet();
+    const body = await response.json();
+    const setupConfig = await readSetupConfig();
+
+    expect(response.status).toBe(502);
+    expect(body.state).toBe("error");
+    expect(body.reloading).toBe(false);
+    expect(body.lastError).toContain("1006");
+    expect(setupConfig.telegram_reload_started_at).toBeUndefined();
+    expect(setupConfig.telegram_last_error).toContain("1006");
   });
 
   it("blocks pairing until Telegram is configured and enabled", async () => {

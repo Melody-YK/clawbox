@@ -81,40 +81,19 @@ export function updateConfig<T>(
 }
 
 
-/**
- * Best-effort gateway reload/restart after AI / channel config changes.
- *
- * setup 服务以普通用户运行，很多设备上会被 systemd/polkit 拒绝直接 try-restart。
- * 这里不要把“无权限重启”当作配置失败：
- * - 先尝试 systemctl try-restart
- * - 若被拒绝，回退为同用户向 openclaw 进程发送 USR1（触发就地重载）
- * - 再失败也只记录日志，不抛异常，避免前端一直卡在 pending
- */
+/** Reload OpenClaw through its supported SIGUSR1 restart path. */
 export async function restartGateway(): Promise<void> {
-  try {
-    await exec("systemctl", ["try-restart", "clawbox-gateway.service"], {
-      timeout: 25_000,
-    });
-    return;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const authDenied = /Interactive authentication required|Access denied|polkit/i.test(message);
-
-    if (!authDenied) {
-      console.warn("[openclaw-config] systemctl try-restart failed:", message);
-    } else {
-      console.info("[openclaw-config] systemctl try-restart denied; fallback to USR1 reload");
-    }
-
-    try {
-      await exec("pkill", ["-USR1", "-x", "openclaw"], { timeout: 8_000 });
-    } catch (signalErr) {
-      console.warn(
-        "[openclaw-config] fallback USR1 reload failed:",
-        signalErr instanceof Error ? signalErr.message : signalErr,
-      );
-    }
+  const { stdout } = await exec(
+    "systemctl",
+    ["show", "clawbox-gateway.service", "--property=MainPID", "--value"],
+    { timeout: 3_000 },
+  );
+  const pid = Number.parseInt(stdout.trim(), 10);
+  if (!Number.isSafeInteger(pid) || pid <= 1) {
+    throw new Error("clawbox-gateway is not running");
   }
+
+  process.kill(pid, "SIGUSR1");
 }
 
 async function readWeixinAccountStatus(): Promise<{ connected: boolean; accountIds: string[] }> {

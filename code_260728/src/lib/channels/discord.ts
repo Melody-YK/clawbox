@@ -1,5 +1,6 @@
 import { readConfig, restartGateway, writeConfig } from "@/lib/openclaw-config";
 import { probeOpenClawChannel } from "./openclaw-runtime";
+import { fetchWithChannelProxy, normalizeChannelProxy } from "./proxy";
 
 const DISCORD_API_ROOT = "https://discord.com/api/v10";
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -15,6 +16,7 @@ export interface DiscordConfigView {
   configured: boolean;
   enabled: boolean;
   hasToken: boolean;
+  hasProxy: boolean;
   serverId: string | null;
   userId: string | null;
   groupPolicy: string;
@@ -36,7 +38,7 @@ export interface DiscordChannelStatus extends DiscordConfigView {
 }
 
 export class DiscordChannelError extends Error {
-  constructor(public readonly code: "invalid_token" | "invalid_id" | "unreachable" | "gateway", message: string) {
+  constructor(public readonly code: "invalid_token" | "invalid_id" | "invalid_proxy" | "unreachable" | "gateway", message: string) {
     super(message);
     this.name = "DiscordChannelError";
   }
@@ -77,6 +79,10 @@ export function getDiscordTokenFromConfig(config: Awaited<ReturnType<typeof read
   return readString(channelRecord(config).token);
 }
 
+export function getDiscordProxyFromConfig(config: Awaited<ReturnType<typeof readConfig>>): string | null {
+  return readString(channelRecord(config).proxy);
+}
+
 export async function getDiscordConfig(): Promise<DiscordConfigView> {
   const channel = channelRecord(await readConfig());
   const hasToken = Boolean(readString(channel.token));
@@ -85,6 +91,7 @@ export async function getDiscordConfig(): Promise<DiscordConfigView> {
     configured,
     enabled: configured && channel.enabled !== false,
     hasToken,
+    hasProxy: Boolean(readString(channel.proxy)),
     serverId: readString(channel.serverId),
     userId: readString(channel.userId),
     groupPolicy: readString(channel.groupPolicy) || "allowlist",
@@ -92,17 +99,21 @@ export async function getDiscordConfig(): Promise<DiscordConfigView> {
   };
 }
 
-export async function validateDiscordBotToken(value: string, fetcher: typeof fetch = fetch): Promise<DiscordBotIdentity> {
+export async function validateDiscordBotToken(
+  value: string,
+  fetcher: typeof fetch = fetch,
+  proxy?: string | null,
+): Promise<DiscordBotIdentity> {
   const token = normalizeDiscordToken(value);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetcher(`${DISCORD_API_ROOT}/users/@me`, {
+    const response = await fetchWithChannelProxy(`${DISCORD_API_ROOT}/users/@me`, {
       headers: { Authorization: `Bot ${token}` },
       cache: "no-store",
       redirect: "error",
       signal: controller.signal,
-    });
+    }, proxy, fetcher);
     const payload = (await response.json().catch(() => null)) as unknown;
     if (response.status === 401 || response.status === 403) {
       throw new DiscordChannelError("invalid_token", "Discord rejected this Bot Token. Copy the current token from the Developer Portal.");
@@ -130,6 +141,8 @@ export async function saveDiscordConfig(input: {
   serverId?: string;
   userId?: string;
   enabled: boolean;
+  proxy?: string;
+  removeProxy?: boolean;
 }): Promise<DiscordConfigView> {
   const config = await readConfig();
   const channels = isRecord(config.channels) ? { ...config.channels } : {};
@@ -141,6 +154,8 @@ export async function saveDiscordConfig(input: {
     groupPolicy: readString(current.groupPolicy) || "allowlist",
   };
   if (input.token !== undefined) next.token = normalizeDiscordToken(input.token);
+  if (input.removeProxy === true) delete next.proxy;
+  else if (input.proxy !== undefined) next.proxy = normalizeChannelProxy(input.proxy);
   if (input.serverId !== undefined) next.serverId = normalizeId(input.serverId, "Server ID");
   if (input.userId !== undefined) next.userId = normalizeId(input.userId, "User ID");
   const serverId = readString(next.serverId);
@@ -162,7 +177,8 @@ export async function getDiscordStatus(): Promise<DiscordChannelStatus> {
   const base: DiscordChannelStatus = { ...stored, state: stored.configured ? stored.enabled ? "configured" : "disabled" : "not_configured", connected: false, running: false, bot: null, lastError: null };
   if (!stored.configured || !stored.enabled) return base;
   let bot: DiscordBotIdentity | null = null;
-  try { bot = await validateDiscordBotToken(getDiscordTokenFromConfig(await readConfig()) || ""); } catch { /* live gateway status remains authoritative */ }
+  const config = await readConfig();
+  try { bot = await validateDiscordBotToken(getDiscordTokenFromConfig(config) || "", fetch, getDiscordProxyFromConfig(config)); } catch { /* live gateway status remains authoritative */ }
   const runtime = await probeOpenClawChannel("discord");
   return { ...base, state: runtime.state, connected: runtime.connected, running: runtime.running, bot, lastError: runtime.lastError };
 }

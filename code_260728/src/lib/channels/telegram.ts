@@ -3,6 +3,7 @@ import path from "path";
 import { promisify } from "util";
 import { readConfig, writeConfig } from "@/lib/openclaw-config";
 import { getChannelStatusJson } from "./channel-status-cache";
+import { fetchWithChannelProxy, normalizeChannelProxy } from "./proxy";
 
 const exec = promisify(execFile);
 const OPENCLAW_BIN =
@@ -18,6 +19,7 @@ const OPENCLAW_USER_HOME = process.env.HOME || "/home/clawbox";
 const TELEGRAM_API_ROOT = "https://api.telegram.org";
 const TELEGRAM_REQUEST_TIMEOUT_MS = 12_000;
 const OPENCLAW_STATUS_TIMEOUT_MS = 12_000;
+const OPENCLAW_PAIRING_TIMEOUT_MS = 30_000;
 
 export const TELEGRAM_STATUS_ARGS = [
   "channels",
@@ -37,6 +39,7 @@ export type TelegramChannelState =
 
 export type TelegramErrorCode =
   | "invalid_token"
+  | "invalid_proxy"
   | "telegram_unreachable"
   | "gateway_unavailable"
   | "channel_not_connected"
@@ -62,6 +65,7 @@ export interface TelegramConfigView {
   configured: boolean;
   enabled: boolean;
   hasToken: boolean;
+  hasProxy: boolean;
   dmPolicy: string;
   groupPolicy: string;
 }
@@ -125,18 +129,19 @@ export function normalizeTelegramToken(value: string): string {
 export async function validateTelegramBotToken(
   value: string,
   fetcher: typeof fetch = fetch,
+  proxy?: string | null,
 ): Promise<TelegramBotIdentity> {
   const token = normalizeTelegramToken(value);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TELEGRAM_REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetcher(`${TELEGRAM_API_ROOT}/bot${token}/getMe`, {
+    const response = await fetchWithChannelProxy(`${TELEGRAM_API_ROOT}/bot${token}/getMe`, {
       method: "GET",
       cache: "no-store",
       redirect: "error",
       signal: controller.signal,
-    });
+    }, proxy, fetcher);
     const payload = (await response.json().catch(() => null)) as unknown;
 
     if (!response.ok || !isRecord(payload) || payload.ok !== true) {
@@ -192,11 +197,13 @@ export async function getTelegramConfig(): Promise<TelegramConfigView> {
   const config = await readConfig();
   const channel = telegramRecord(config);
   const hasToken = Boolean(readString(channel.botToken));
+  const hasProxy = Boolean(readString(channel.proxy));
 
   return {
     configured: hasToken,
     enabled: hasToken && channel.enabled !== false,
     hasToken,
+    hasProxy,
     dmPolicy: readString(channel.dmPolicy) || "pairing",
     groupPolicy: readString(channel.groupPolicy) || "disabled",
   };
@@ -207,9 +214,16 @@ export async function getTelegramBotToken(): Promise<string | null> {
   return readString(telegramRecord(config).botToken);
 }
 
+export async function getTelegramProxy(): Promise<string | null> {
+  const config = await readConfig();
+  return readString(telegramRecord(config).proxy);
+}
+
 export async function saveTelegramConfig(input: {
   botToken?: string;
   enabled: boolean;
+  proxy?: string;
+  removeProxy?: boolean;
 }): Promise<TelegramConfigView> {
   const config = await readConfig();
   const channels = isRecord(config.channels) ? { ...config.channels } : {};
@@ -223,6 +237,11 @@ export async function saveTelegramConfig(input: {
 
   if (input.botToken !== undefined) {
     next.botToken = normalizeTelegramToken(input.botToken);
+  }
+  if (input.removeProxy === true) {
+    delete next.proxy;
+  } else if (input.proxy !== undefined) {
+    next.proxy = normalizeChannelProxy(input.proxy);
   }
 
   channels.telegram = next;
@@ -385,7 +404,7 @@ export async function listTelegramPairingRequests(): Promise<TelegramPairingRequ
     "list",
     "telegram",
     "--json",
-  ]);
+  ], OPENCLAW_PAIRING_TIMEOUT_MS);
 
   let payload: unknown;
   try {
@@ -426,5 +445,5 @@ export async function approveTelegramPairing(codeValue: string): Promise<void> {
     "telegram",
     code,
     "--notify",
-  ]);
+  ], OPENCLAW_PAIRING_TIMEOUT_MS);
 }
