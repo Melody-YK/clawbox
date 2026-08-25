@@ -35,7 +35,7 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "'unsafe-inline' is required for Next.js hydration",
+              // Next.js hydration currently requires inline scripts and styles.
               `script-src 'self' 'unsafe-inline'`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",

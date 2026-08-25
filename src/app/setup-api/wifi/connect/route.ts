@@ -62,6 +62,7 @@ export async function POST(request: Request) {
 
   if (body.skip) {
     await setMany({
+      wifi_ssid: undefined,
       wifi_configured: true,
       wifi_connecting: false,
       wifi_target_ssid: undefined,

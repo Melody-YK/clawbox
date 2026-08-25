@@ -162,3 +162,116 @@
 - ✅ Recurrent remote-drop issue is mitigated via restart strategy + AP disable + script permission recovery.
 - ✅ Device services/API are reachable in stable client mode.
 - ⚠️ Remaining alignment item: setup status field `ai_model_provider` may still show historical value (`openrouter`) while runtime model is DeepSeek; can be handled as a separate consistency patch.
+
+---
+
+## 2026-05-15 Evening Follow-up: WeChat channel end-to-end closure + setup runtime stabilization
+
+### Action 15 (done): WeChat channel config-key alignment and status semantics repair
+- Updated backend to align channel key with plugin reality:
+  - from `channels.wechat` to `channels.openclaw-weixin` (with legacy fallback read + migration write)
+- Added WeChat login-status API endpoint:
+  - `GET /setup-api/wechat/login-status`
+  - returns `{ connected, accountIds }` based on actual token/account files
+- Frontend status logic changed to use real channel connection state instead of plain `enabled`.
+
+### Action 16 (done): QR login flow hardening
+- Updated QR route behavior:
+  - no immediate destructive teardown after QR URL extraction
+  - supports in-flight login reuse and pending response semantics
+  - preserves diagnostic output tail on timeout for faster triage
+- Real-device QR generation verified multiple times (fresh links returned).
+
+### Action 17 (done): Root-cause isolation for “scanned but not connected”
+- Confirmed plugin runtime expectations from source:
+  - effective key is `openclaw-weixin`
+  - connected state depends on token/account file persistence under
+    `/home/clawbox/.openclaw/openclaw-weixin/accounts`
+- Observed and resolved bound-state inconsistency during re-login attempts:
+  - final state reached with concrete account token file materialized.
+
+### Action 18 (done): setup service crash recovery and runtime stabilization
+- New blocker discovered during final restart pass:
+  - `clawbox-setup` entered restart loop with
+    `SyntaxError: Unexpected end of JSON input`
+- Root-cause found:
+  - zero-byte `.next` manifest artifacts from interrupted build window
+- Recovery actions:
+  1. Full rebuild completed cleanly via npm
+  2. `production-server.js` hardened to start through `next start` path
+  3. setup/gateway/oled restarted and re-verified
+
+### Action 19 (done): final real-device verification snapshot
+- Setup runtime:
+  - `clawbox-setup`: active
+  - HTTP API available again
+- WeChat channel state:
+  - `GET /setup-api/wechat/login-status` => `{"connected": true, "accountIds": ["76b339cdaae6-im-bot"]}`
+  - account files present under `/home/clawbox/.openclaw/openclaw-weixin/accounts`
+  - gateway logs show provider/monitor startup and config cache for real WeChat user id
+- Result:
+  - WeChat channel setup flow is now functionally closed-loop on device.
+
+## Consolidated implementation summary (to this point)
+1. WeChat QR route timeout/ANSI/diagnostics repair and real-device verification
+2. Channel config key migration to `openclaw-weixin`
+3. Real login-state API + frontend state semantics fix
+4. Deployment stability guardrails (AP restart policy + script exec permissions)
+5. Local Git rollback baseline and checkpoint commits
+6. Setup runtime crash recovery (zero-byte build artifact remediation)
+7. End-to-end WeChat connected state verified with persisted account token file
+
+---
+
+## 中文版汇总（截至 2026-05-15 晚）
+
+### 已实现功能
+1. **微信通道关键修复**
+   - 将配置键从 `channels.wechat` 对齐为 `channels.openclaw-weixin`（兼容旧键读取）。
+   - 新增登录状态接口：`GET /setup-api/wechat/login-status`。
+   - 前端 WeChat 完成态改为依据真实连接状态 `connected`，不再仅依赖 `enabled`。
+
+2. **二维码登录链路增强**
+   - `POST /setup-api/wechat/qrcode` 改为更稳健流程：
+     - 复用进行中的登录进程；
+     - 避免“出码即中断”；
+     - 增强超时诊断信息；
+     - 支持 pending 场景提示。
+
+3. **真机链路打通（核心闭环）**
+   - 已确认账号凭证落盘：
+     - `/home/clawbox/.openclaw/openclaw-weixin/accounts/76b339cdaae6-im-bot.json`
+   - 已确认状态接口返回：
+     - `{"connected": true, "accountIds": ["76b339cdaae6-im-bot"]}`
+   - 网关日志已出现：
+     - `starting weixin provider`
+     - `weixin monitor started`
+     - `config cached for ...@im.wechat`
+
+4. **稳定性修复**
+   - 修复远程维护时掉线风险：
+     - AP 不作为维护默认重启项；
+     - 脚本执行权限恢复（`chmod/chown`）。
+   - 处理 setup 服务启动循环：
+     - 定位到 `.next` 中零字节 manifest 导致 `Unexpected end of JSON input`；
+     - 完整重建后恢复。
+
+5. **可回退与可审计**
+   - 已建立本地 Git 检查点，关键提交包括：
+     - `7a995c0`（初始基线）
+     - `e90b237`（行尾与回退说明）
+     - `9440284`（现场修复日志更新）
+     - `ef05f29`（微信通道键/状态流修复）
+     - `d731a70`（运行时启动稳健性修复）
+
+### 本轮执行过的主要事项（摘要）
+- 本地代码修复、TS 编译与测试通过。
+- 将关键文件同步至树莓派源码与运行目录，使用 npm 重建并重启服务（避免 AP 干扰）。
+- 多轮真机回归：`/setup-api/wechat/configure`、`/setup-api/wechat/login-status`、网关日志与账号文件落盘。
+
+### 当前结论
+- **微信通道核心配置与登录链路已打通**。
+- 如后续仍出现“偶发不回复”，优先按日志检查：
+  1) `clawbox-gateway` 中 `openclaw-weixin` 启动与缓存日志；
+  2) `accounts/*.json` 是否存在且 token 非空；
+  3) setup/gateway 服务是否处于 active。

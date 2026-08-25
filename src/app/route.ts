@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { redirectToSetup } from "@/lib/redirect";
 
 export const dynamic = "force-dynamic";

@@ -6,26 +6,37 @@ import Image from "next/image";
 import ProgressBar from "./ProgressBar";
 import WifiStep from "./WifiStep";
 import DoneStep from "./DoneStep";
+import { isLocalChannelPreview, resolveSetupFlowState } from "@/lib/setup-flow";
+import LanguageSelector from "./LanguageSelector";
+import { useI18n } from "./I18nProvider";
+import type { LocalizedMessage } from "@/lib/i18n";
 
 function applyStatusData(
   data: Record<string, unknown>,
   setSetupComplete: (v: boolean) => void,
   setCurrentStep: (v: number) => void
 ) {
-  if (data.setup_complete) {
-    setSetupComplete(true);
-    setCurrentStep(2);
-  } else if (data.wifi_configured) {
-    setCurrentStep(2);
-  }
+  const nextState = resolveSetupFlowState(data);
+  setSetupComplete(nextState.setupComplete);
+  setCurrentStep(nextState.currentStep);
 }
 
 export default function SetupWizard() {
+  const { t, translateText } = useI18n();
   const [currentStep, setCurrentStep] = useState(1);
   const [setupComplete, setSetupComplete] = useState(false);
+  const [localChannelPreview, setLocalChannelPreview] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [wifiStatusHint, setWifiStatusHint] = useState<{
+    type: "success" | "error";
+    message: LocalizedMessage;
+  } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    setLocalChannelPreview(isLocalChannelPreview(window.location));
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -44,6 +55,38 @@ export default function SetupWizard() {
         const data = await r.json();
         if (cancelled) return;
         applyStatusData(data, setSetupComplete, setCurrentStep);
+        if (typeof data?.wifi_last_error === "string" && data.wifi_last_error.trim()) {
+          setWifiStatusHint({
+            type: "error",
+            message: data.wifi_last_error,
+          });
+        } else if (data?.wifi_connecting) {
+          const targetSsid =
+            typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
+              ? data.wifi_target_ssid
+              : "WiFi";
+          setWifiStatusHint({
+            type: "success",
+            message: {
+              key: "Connecting to {ssid} and waiting for a DHCP address. If the connection fails, reconnect to the setup hotspot and try again.",
+              values: { ssid: targetSsid },
+            },
+          });
+        } else if (data?.wifi_configured && data?.wifi_mode === "client") {
+          const connectedSsid =
+            typeof data?.wifi_target_ssid === "string" && data.wifi_target_ssid.trim()
+              ? data.wifi_target_ssid
+              : "WiFi";
+          setWifiStatusHint({
+            type: "success",
+            message: {
+              key: "Connected to {ssid}. You can continue setup on this network.",
+              values: { ssid: connectedSsid },
+            },
+          });
+        } else {
+          setWifiStatusHint(null);
+        }
         setSetupError(null);
         if (data?.wifi_connecting) {
           timer = setTimeout(poll, 2000);
@@ -67,10 +110,12 @@ export default function SetupWizard() {
     };
   }, [retryCount]);
 
+  const visibleStep = localChannelPreview ? 2 : currentStep;
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="spinner" role="status" aria-label="Loading" />
+        <div className="spinner" role="status" aria-label={t("Loading")} />
       </div>
     );
   }
@@ -79,13 +124,13 @@ export default function SetupWizard() {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="text-center max-w-md">
-          <p className="text-[var(--coral-bright)] text-sm mb-4">{setupError}</p>
+          <p className="text-[var(--coral-bright)] text-sm mb-4">{translateText(setupError)}</p>
           <button
             type="button"
             onClick={() => setRetryCount((c) => c + 1)}
             className="px-6 py-2.5 btn-gradient text-white rounded-lg text-sm font-semibold cursor-pointer transition transform hover:scale-105"
           >
-            Retry
+            {t("Retry")}
           </button>
         </div>
       </div>
@@ -113,16 +158,17 @@ export default function SetupWizard() {
             </span>
           </div>
         </Link>
-        {currentStep < 2 && <ProgressBar currentStep={currentStep} />}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {visibleStep < 2 && <ProgressBar currentStep={visibleStep} />}
+          <LanguageSelector />
+        </div>
       </header>
 
       <main
         className="flex-1 flex flex-col items-center justify-start sm:justify-center px-4 pt-2 pb-4 sm:p-6"
       >
-        {currentStep === 1 && (
-          <WifiStep onNext={() => setCurrentStep(2)} />
-        )}
-        {currentStep === 2 && <DoneStep setupComplete={setupComplete} />}
+        {visibleStep === 1 && <WifiStep externalStatus={wifiStatusHint} />}
+        {visibleStep === 2 && <DoneStep setupComplete={setupComplete} />}
       </main>
 
       <footer className="px-4 py-3 flex items-center justify-center gap-3">
@@ -130,7 +176,7 @@ export default function SetupWizard() {
           href="https://openclawhardware.dev/"
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="ClawBox website"
+          aria-label={t("ClawBox website")}
           className="flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] transition transform hover:scale-105"
         >
           <Image src="/clawbox-logo.png" alt="ClawBox" width={28} height={28} className="w-7 h-7 object-contain" />

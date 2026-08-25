@@ -1,8 +1,12 @@
+"use client";
+
+import { useI18n } from "./I18nProvider";
+
 interface ProgressBarProps {
   currentStep: number;
 }
 
-const STEP_LABELS = ["WiFi", "Done"];
+const STEP_LABELS = ["WiFi", "AI & Channels"] as const;
 
 function stepColors(isDone: boolean, isActive: boolean): string {
   if (isDone) return "text-[#00e5cc] bg-[rgba(0,229,204,0.1)]";
@@ -17,6 +21,8 @@ function badgeColor(isDone: boolean, isActive: boolean): string {
 }
 
 export default function ProgressBar({ currentStep }: ProgressBarProps) {
+  const { t } = useI18n();
+
   return (
     <div
       className="flex gap-1 flex-wrap"
@@ -24,7 +30,10 @@ export default function ProgressBar({ currentStep }: ProgressBarProps) {
       aria-valuemin={1}
       aria-valuemax={STEP_LABELS.length}
       aria-valuenow={currentStep}
-      aria-label={`Setup progress: step ${currentStep} of ${STEP_LABELS.length}`}
+      aria-label={t("Setup progress: step {current} of {total}", {
+        current: currentStep,
+        total: STEP_LABELS.length,
+      })}
     >
       {STEP_LABELS.map((label, i) => {
         const num = i + 1;
@@ -42,7 +51,7 @@ export default function ProgressBar({ currentStep }: ProgressBarProps) {
             >
               {num}
             </span>
-            <span className="hidden sm:inline">{label}</span>
+            <span className="hidden sm:inline">{t(label)}</span>
           </div>
         );
       })}

@@ -7,8 +7,31 @@ if [ -f "$HOTSPOT_ENV_FILE" ]; then
   . "$HOTSPOT_ENV_FILE"
 fi
 
-# 自动检测WiFi接口
-IFACE="${NETWORK_INTERFACE:-$(iw dev 2>/dev/null | awk '/Interface/ {print $2}' | head -1 || echo 'wlan0')}"
+resolve_wifi_iface() {
+  local preferred="${NETWORK_INTERFACE:-}"
+
+  if [ -n "$preferred" ] && nmcli -t -f GENERAL.TYPE device show "$preferred" 2>/dev/null | grep -q '^GENERAL.TYPE:wifi$'; then
+    echo "$preferred"
+    return 0
+  fi
+
+  local detected
+  detected=$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi" {print $1; exit}')
+  if [ -n "$detected" ]; then
+    echo "$detected"
+    return 0
+  fi
+
+  detected=$(iw dev 2>/dev/null | awk '/Interface/ {print $2}' | head -1)
+  if [ -n "$detected" ]; then
+    echo "$detected"
+    return 0
+  fi
+
+  return 1
+}
+
+IFACE="$(resolve_wifi_iface || true)"
 AP_IP="192.168.4.1"
 AP_SSID="${HOTSPOT_SSID:-ClawBox-Setup}"
 AP_PASSWORD="${HOTSPOT_PASSWORD:-}"
@@ -17,12 +40,31 @@ FORCE_AP="${CLAWBOX_FORCE_AP:-0}"
 DHCP_WAIT_MS="${CLAWBOX_DHCP_WAIT_MS:-45000}"
 DHCP_POLL_MS="${CLAWBOX_DHCP_POLL_MS:-1500}"
 
+if [ -z "$IFACE" ]; then
+  echo "[AP] No WiFi interface detected (check driver/rfkill)" >&2
+  exit 1
+fi
+
 echo "[AP] Starting hotspot on interface: $IFACE"
 
 if [ "${HOTSPOT_DISABLED:-0}" = "1" ]; then
   echo "[AP] Hotspot disabled by configuration"
   exit 0
 fi
+
+ensure_wifi_ready() {
+  rfkill unblock wifi 2>/dev/null || true
+  nmcli radio wifi on 2>/dev/null || true
+  nmcli device set "$IFACE" managed yes 2>/dev/null || true
+  ip link set "$IFACE" up 2>/dev/null || true
+}
+
+if ! ip link show "$IFACE" >/dev/null 2>&1; then
+  echo "[AP] WiFi interface '$IFACE' not found" >&2
+  exit 1
+fi
+
+ensure_wifi_ready
 
 wait_for_ipv4() {
   local elapsed=0
@@ -74,11 +116,13 @@ nmcli connection add \
   con-name "$AP_SSID" \
   ssid "$AP_SSID" \
   autoconnect no \
+  connection.interface-name "$IFACE" \
   wifi.mode ap \
   wifi.band bg \
   wifi.channel 6 \
   ipv4.method shared \
-  ipv4.addresses "$AP_IP/24"
+  ipv4.addresses "$AP_IP/24" \
+  ipv6.method ignore
 
 # 配置安全
 if [ -n "$AP_PASSWORD" ]; then
@@ -91,7 +135,7 @@ fi
 
 # 启动热点
 echo "[AP] Activating hotspot..."
-nmcli connection up "$AP_SSID"
+nmcli connection up "$AP_SSID" ifname "$IFACE"
 
 # 启用IP转发
 sysctl -w net.ipv4.ip_forward=1 >/dev/null

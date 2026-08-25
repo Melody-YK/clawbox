@@ -1,13 +1,17 @@
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const host = process.env.HOSTNAME || "0.0.0.0";
 const port = process.env.PORT || "80";
 
-// Avoid relying on .next/standalone/server.js because it may be missing/empty
-// in field deployments. Start Next directly from installed package.
+const standaloneServer = path.join(__dirname, ".next", "standalone", "server.js");
 const nextCli = require.resolve("next/dist/bin/next");
+const command = fs.existsSync(standaloneServer)
+  ? [standaloneServer]
+  : [nextCli, "start", "--hostname", host, "--port", port];
 
-const child = spawn(process.execPath, [nextCli, "start", "--hostname", host, "--port", port], {
+const child = spawn(process.execPath, command, {
   cwd: __dirname,
   env: process.env,
   stdio: "inherit",

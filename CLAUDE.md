@@ -49,7 +49,9 @@ sudo bash install.sh --step NAME
 - `/setup-api/system/info`
   System status plus current access entrypoints
 - `/`
-  Frontend entry that proxies the local OpenClaw gateway after setup
+  Redirects to `/setup`; no account or administrator sign-in is required
+
+The user flow stays on the setup surface: Wi-Fi, AI provider, optional message channels, then use. Channel configuration is not moved to a separate signed-in portal.
 
 ## Important Files
 

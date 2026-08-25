@@ -77,6 +77,24 @@ afterAll(async () => {
 });
 
 describe("wifi connect route", () => {
+  it("clears stored WiFi targets when the setup is explicitly skipped for Ethernet", async () => {
+    await fs.writeFile(
+      CONFIG_PATH,
+      JSON.stringify({ wifi_ssid: "AKA-ylwz", wifi_target_ssid: "AKA-ylwz" }, null, 2),
+      "utf-8",
+    );
+
+    const res = await wifiConnectPost(jsonRequest({ skip: true }));
+    const body = await res.json();
+    const saved = JSON.parse(await fs.readFile(CONFIG_PATH, "utf-8")) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(saved.wifi_configured).toBe(true);
+    expect(saved.wifi_ssid).toBeUndefined();
+    expect(saved.wifi_target_ssid).toBeUndefined();
+  });
+
   it("records a pending WiFi switch immediately and marks success after DHCP is ready", async () => {
     switchToClientMock.mockResolvedValue({
       message: "ready",
