@@ -770,6 +770,15 @@ const ZH_CN_MESSAGES: Record<string, string> = {
   "QR login cancelled.": "\u4e8c\u7ef4\u7801\u767b\u5f55\u5df2\u53d6\u6d88\u3002",
   "Replaced by a newer QR login session.": "\u4e8c\u7ef4\u7801\u767b\u5f55\u4f1a\u8bdd\u5df2\u88ab\u65b0\u4f1a\u8bdd\u66ff\u6362\u3002",
   "QR login ended before confirmation.": "\u4e8c\u7ef4\u7801\u767b\u5f55\u5728\u786e\u8ba4\u524d\u7ed3\u675f\u3002",
+  "Use one of three Zalo connection modes: official Bot, official ClawBot, or personal-account QR login": "\u4f7f\u7528\u4e09\u79cd Zalo \u8fde\u63a5\u65b9\u5f0f\u4e4b\u4e00\uff1a\u5b98\u65b9 Bot\u3001\u5b98\u65b9 ClawBot \u6216\u4e2a\u4eba\u8d26\u53f7\u4e8c\u7ef4\u7801\u767b\u5f55\u3002",
+  "Choose a Zalo connection mode": "\u9009\u62e9 Zalo \u8fde\u63a5\u65b9\u5f0f",
+  "Zalo connection mode": "Zalo \u8fde\u63a5\u65b9\u5f0f",
+  "Configure one mode for normal use. Existing configurations for other modes are preserved and can be reviewed from this same Zalo panel": "\u65e5\u5e38\u4f7f\u7528\u914d\u7f6e\u4e00\u79cd\u65b9\u5f0f\u5373\u53ef\u3002\u5176\u4ed6\u65b9\u5f0f\u5df2\u6709\u7684\u914d\u7f6e\u4f1a\u4fdd\u7559\uff0c\u53ef\u5728\u540c\u4e00\u4e2a Zalo \u9762\u677f\u4e2d\u67e5\u770b\u3002",
+  "Official Bot": "\u5b98\u65b9 Bot",
+  "Use a Bot Token from Zalo Bot Platform": "\u4f7f\u7528 Zalo Bot Platform \u7684 Bot Token",
+  "Official ClawBot": "\u5b98\u65b9 ClawBot",
+  "Create an owner-bound bot with the official QR flow": "\u901a\u8fc7\u5b98\u65b9\u4e8c\u7ef4\u7801\u6d41\u7a0b\u521b\u5efa\u7ed1\u5b9a\u6240\u6709\u8005\u7684\u673a\u5668\u4eba",
+  "Link a personal account by QR with an explicit risk acknowledgement": "\u786e\u8ba4\u98ce\u9669\u540e\u901a\u8fc7\u4e8c\u7ef4\u7801\u5173\u8054\u4e2a\u4eba\u8d26\u53f7",
   "Connected to {ssid}. You can continue setup on this network.":
     "\u5df2\u8fde\u63a5\u5230 {ssid}\u3002\u73b0\u5728\u53ef\u4ee5\u5728\u6b64\u7f51\u7edc\u4e2d\u7ee7\u7eed\u8bbe\u7f6e\u3002",
 };
@@ -991,6 +1000,15 @@ const EN_MESSAGES: Record<string, string> = {
   "WhatsApp step 1": "No Bot ID, API token, developer app, webhook, or ClawBox account is required.",
   "WhatsApp step 2": "On your phone, open WhatsApp, then choose Settings, Linked devices, and Link a device.",
   "WhatsApp step 3": "Choose an account mode before generating the QR code. Dedicated mode is for shared use and requires administrator pairing approval for new users; personal mode uses the owner number only for the allowlist and self-chat. Both modes sign in by QR code.",
+  "Use one of three Zalo connection modes: official Bot, official ClawBot, or personal-account QR login": "Choose one Zalo connection mode: official Bot, official ClawBot, or personal-account QR login.",
+  "Choose a Zalo connection mode": "Choose a Zalo connection mode",
+  "Zalo connection mode": "Zalo connection mode",
+  "Configure one mode for normal use. Existing configurations for other modes are preserved and can be reviewed from this same Zalo panel": "Configure one mode for normal use. Existing configurations for other modes are preserved and can be reviewed from this same Zalo panel.",
+  "Official Bot": "Official Bot",
+  "Use a Bot Token from Zalo Bot Platform": "Use a Bot Token from Zalo Bot Platform",
+  "Official ClawBot": "Official ClawBot",
+  "Create an owner-bound bot with the official QR flow": "Create an owner-bound bot with the official QR flow",
+  "Link a personal account by QR with an explicit risk acknowledgement": "Link a personal account by QR with an explicit risk acknowledgement",
 };
 
 const dashboardMessages: Partial<Record<LocaleCode, Record<string, string>>> = {

@@ -178,29 +178,35 @@ describe("runtime evidence", () => {
 });
 
 describe("channel setup UI", () => {
-  it("contains all five new channels, official help links, bilingual copy, and QR routes", async () => {
+  it("contains the additional channels, unified Zalo modes, bilingual copy, and QR routes", async () => {
     const source = await fs.readFile(path.join(process.cwd(), "components/ChannelSetupExtras.tsx"), "utf8");
-    for (const label of ["Discord", "Zalo Bot", "Zalo ClawBot", "Zalo Personal", "Signal"]) expect(source).toContain(label);
+    for (const label of ["Discord", "Zalo", "Official Bot", "Official ClawBot", "Personal account", "Signal"]) expect(source).toContain(label);
+    expect(source).toContain('role="tablist"');
+    expect(source).toContain("Existing configurations for other modes are preserved");
     expect(source).toContain("https://discord.com/developers/applications");
     expect(source).toContain("https://bot.zaloplatforms.com");
     expect(source).toContain("/setup-api/channels/zalo-clawbot/login-status");
     expect(source).toContain("/setup-api/channels/zalouser/login-status");
     expect(source).toContain("/setup-api/channels/signal/login-status");
     expect(source).toContain('locale === "zh-CN"');
-    expect(source).toContain("Unofficial personal-account automation");
+    expect(source).toContain("I understand the unofficial Zalo Personal account risk");
     expect(source).toContain("<ChannelProxyInput id=\"discord\"");
     expect(source).toContain("<ChannelProxyInput id=\"zalo\"");
   });
 
-  it("exposes every new channel through the unified chat-channel picker", async () => {
+  it("exposes one unified Zalo channel through the chat-channel picker", async () => {
     const source = await fs.readFile(
       path.join(process.cwd(), "components/DoneStep.tsx"),
       "utf8",
     );
 
-    for (const id of ["discord", "zalo", "zalo-clawbot", "zalouser", "signal"]) {
+    for (const id of ["discord", "zalo", "signal"]) {
       expect(source).toContain(`id: "${id}"`);
     }
+    expect(source).toContain('tag: "ZL", name: "Zalo"');
+    expect(source).toContain('description: "Use one of three Zalo connection modes: official Bot, official ClawBot, or personal-account QR login"');
+    expect(source).not.toContain('id: "zalo-clawbot", tag');
+    expect(source).not.toContain('id: "zalouser", tag');
     expect(source).toContain("isAdditionalChatChannel(activeChatChannel)");
     expect(source).toContain("<ChannelSetupExtras");
     expect(source).toContain("activeChannel={activeChatChannel}");

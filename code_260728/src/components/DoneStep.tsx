@@ -170,9 +170,7 @@ const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string
   { id: "line", tag: "LN", name: "LINE", description: "Connect a LINE Messaging API bot through a public HTTPS webhook." },
   { id: "qqbot", tag: "QQ", name: "QQ Bot", description: "Create or connect an official QQ bot by scanning a QR code." },
   { id: "discord", tag: "DC", name: "Discord", description: "Connect a Discord bot with a Bot Token and optional server allowlist." },
-  { id: "zalo", tag: "ZB", name: "Zalo Bot", description: "Connect an official Zalo Bot Platform bot with its Bot Token." },
-  { id: "zalo-clawbot", tag: "ZC", name: "Zalo ClawBot", description: "Create an owner-bound Zalo bot through the official Mini App QR flow." },
-  { id: "zalouser", tag: "ZP", name: "Zalo Personal", description: "Link a personal Zalo account by QR code after accepting the account risk." },
+  { id: "zalo", tag: "ZL", name: "Zalo", description: "Use one of three Zalo connection modes: official Bot, official ClawBot, or personal-account QR login" },
   { id: "signal", tag: "SG", name: "Signal", description: "Link Signal through signal-cli and a device-linking QR code." },
 ];
 

@@ -32,6 +32,8 @@ export type AdditionalChannelId =
   | "zalouser"
   | "signal";
 
+export type ZaloMode = "bot" | "clawbot" | "personal";
+
 interface QrSession {
   sessionId: string;
   ownerToken: string;
@@ -333,6 +335,8 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
   const [signalBusy, setSignalBusy] = useState(false);
   const [clawbotConfig, setClawbotConfig] = useState<ClawBotConfig | null>(null);
   const [clawbotNotice, setClawbotNotice] = useState<Notice | null>(null);
+  const [zaloMode, setZaloMode] = useState<ZaloMode>("bot");
+  const zaloModeInitializedRef = useRef(false);
   const clawbotQr = useQrSession("/setup-api/channels/zalo-clawbot", "/setup-api/channels/zalo-clawbot/login-status", "/setup-api/channels/zalo-clawbot/cancel");
   const personalQr = useQrSession("/setup-api/channels/zalouser/qrcode", "/setup-api/channels/zalouser/login-status", "/setup-api/channels/zalouser/cancel");
   const signalQr = useQrSession("/setup-api/channels/signal/qrcode", "/setup-api/channels/signal/login-status", "/setup-api/channels/signal/cancel");
@@ -423,25 +427,27 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
   }, [discordStatus, onCompletionChange]);
 
   useEffect(() => {
-    if (!zaloStatus) return;
-    onCompletionChange("zalo", isConnected(zaloStatus));
-  }, [onCompletionChange, zaloStatus]);
+    if (!zaloStatus && !clawbotConfig && !personalConfig) return;
+    const complete =
+      isConnected(zaloStatus) ||
+      (clawbotConfig?.configured === true && clawbotConfig.enabled !== false) ||
+      (personalConfig?.configured === true && personalConfig.enabled !== false);
+    onCompletionChange("zalo", complete);
+  }, [clawbotConfig, onCompletionChange, personalConfig, zaloStatus]);
 
   useEffect(() => {
-    if (!clawbotConfig) return;
-    onCompletionChange(
-      "zalo-clawbot",
-      clawbotConfig?.configured === true && clawbotConfig.enabled !== false,
-    );
-  }, [clawbotConfig, onCompletionChange]);
-
-  useEffect(() => {
-    if (!personalConfig) return;
-    onCompletionChange(
-      "zalouser",
-      personalConfig?.configured === true && personalConfig.enabled !== false,
-    );
-  }, [onCompletionChange, personalConfig]);
+    if (zaloModeInitializedRef.current) return;
+    const savedMode: ZaloMode | null = zaloStatus?.configured
+      ? "bot"
+      : clawbotConfig?.configured
+        ? "clawbot"
+        : personalConfig?.configured
+          ? "personal"
+          : null;
+    if (!savedMode) return;
+    setZaloMode(savedMode);
+    zaloModeInitializedRef.current = true;
+  }, [clawbotConfig?.configured, personalConfig?.configured, zaloStatus?.configured]);
 
   useEffect(() => {
     if (!signalStatus) return;
@@ -551,7 +557,39 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
         </div>
       </ChannelSection>
 
-      <ChannelSection id="zalo" title="Zalo Bot" description={t("Zalo Bot uses the official Bot Platform token and long polling; it does not use a QR login")} done={zaloStatus?.configured === true} open={activeChannel === "zalo"} onToggle={() => {}} t={t}>
+      <ChannelSection id="zalo" title="Zalo" description={t("Use one of three Zalo connection modes: official Bot, official ClawBot, or personal-account QR login")} done={zaloStatus?.configured === true || clawbotConfig?.configured === true || personalConfig?.configured === true} open={activeChannel === "zalo"} onToggle={() => {}} t={t}>
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-xs font-semibold text-[var(--text-secondary)]">{t("Choose a Zalo connection mode")}</p>
+            <div role="tablist" aria-label={t("Zalo connection mode")} className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {([
+                { id: "bot" as const, title: "Official Bot", description: "Use a Bot Token from Zalo Bot Platform", status: statusText(zaloStatus, t) },
+                { id: "clawbot" as const, title: "Official ClawBot", description: "Create an owner-bound bot with the official QR flow", status: statusText(clawbotConfig, t) },
+                { id: "personal" as const, title: "Personal account", description: "Link a personal account by QR with an explicit risk acknowledgement", status: statusText(personalConfig, t) },
+              ]).map((mode) => {
+                const selected = zaloMode === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls={`zalo-${mode.id}-setup`}
+                    onClick={() => { zaloModeInitializedRef.current = true; setZaloMode(mode.id); }}
+                    className={`min-w-0 rounded-lg border px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--coral-bright)] ${selected ? "border-[var(--coral-bright)] bg-[var(--coral-bright)]/10" : "border-gray-700 bg-[var(--bg-deep)] hover:border-gray-500"}`}
+                  >
+                    <span className="block text-sm font-semibold text-[var(--text-primary)]">{t(mode.title)}</span>
+                    <span className="mt-1 block break-words text-xs leading-relaxed text-[var(--text-muted)]">{t(mode.description)}</span>
+                    <span className={`mt-2 block break-words text-[11px] leading-relaxed ${selected ? "text-[var(--coral-bright)]" : "text-[var(--text-muted)]"}`}>{mode.status}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">{t("Configure one mode for normal use. Existing configurations for other modes are preserved and can be reviewed from this same Zalo panel")}</p>
+          </div>
+
+          {zaloMode === "bot" && (
+            <div id="zalo-bot-setup" role="tabpanel" aria-label={t("Official Bot")} className="space-y-3">
         {guide(t("How to create a Zalo Bot and get its token"), locale === "zh-CN" ? [
           <>打开 <a href="https://bot.zaloplatforms.com" target="_blank" rel="noreferrer" className="text-[#00e5cc] underline">Zalo Bot Platform</a> 并登录。</>,
           <>创建 Bot，完成 Bot 设置后复制完整 Bot Token，通常形如 <code>numeric_id:secret</code>。</>,
@@ -571,10 +609,12 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
           {zaloNotice && <StatusMessage type={zaloNotice.type} message={zaloNotice.message} />}
           <div className="flex flex-wrap gap-2"><button type="button" disabled={zaloBusy || (!zaloToken.trim() && zaloStatus?.configured !== true) || (zaloProxyEnabled && !zaloHasSavedProxy && !zaloProxy.trim())} onClick={() => void saveZalo()} className={BUTTON_CLASS}>{zaloBusy ? t("Saving...") : t("Save Zalo Bot settings")}</button><button type="button" onClick={() => void refreshZaloStatus()} className={SECONDARY_BUTTON_CLASS}>{t("Check live status")}</button></div>
           <p className="break-words text-xs text-[var(--text-muted)]">{statusText(zaloStatus, t)}</p>
-        </div>
-      </ChannelSection>
+         </div>
+            </div>
+          )}
 
-      <ChannelSection id="zalo-clawbot" title="Zalo ClawBot" description={t("Official Zalo Mini App QR login. It creates an owner-bound bot and does not require a developer token")} done={clawbotConfig?.configured === true} open={activeChannel === "zalo-clawbot"} onToggle={() => {}} t={t}>
+          {zaloMode === "clawbot" && (
+            <div id="zalo-clawbot-setup" role="tabpanel" aria-label={t("Official ClawBot")} className="space-y-3">
         {guide(t("How Zalo ClawBot QR login works"), locale === "zh-CN" ? [
           <>这是 OpenClaw 官方文档记录的外部插件 <code>@zalo-platforms/openclaw-zaloclawbot@0.1.4</code>，首次点击时会从 npm 安装固定版本。</>,
           <>使用手机 Zalo 扫描二维码，在 Mini App 中接受条款并授权；如果二维码无法识别，也可以打开页面给出的登录链接。</>,
@@ -590,10 +630,13 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
         ])}
         {clawbotNotice && <StatusMessage type={clawbotNotice.type} message={clawbotNotice.message} />}
         <QrPanel session={clawbotQr.session} image={false} t={t} translateText={translateText} onCancel={() => void clawbotQr.cancel()} onRefresh={() => void clawbotQr.start()} refreshing={clawbotQr.starting} />
-        <button type="button" onClick={() => { setClawbotNotice(null); void clawbotQr.start(); }} disabled={clawbotQr.busy} className={BUTTON_CLASS}>{clawbotQr.busy ? t("Waiting for QR confirmation...") : t("Generate Zalo ClawBot QR")}</button>
-      </ChannelSection>
+         <button type="button" onClick={() => { setClawbotNotice(null); void clawbotQr.start(); }} disabled={clawbotQr.busy} className={BUTTON_CLASS}>{clawbotQr.busy ? t("Waiting for QR confirmation...") : t("Generate Zalo ClawBot QR")}</button>
+              <p className="break-words text-xs text-[var(--text-muted)]">{statusText(clawbotConfig, t)}</p>
+            </div>
+          )}
 
-      <ChannelSection id="zalouser" title="Zalo Personal" description={t("Unofficial personal-account automation. It may trigger account restrictions or a ban")} done={personalConfig?.configured === true} open={activeChannel === "zalouser"} onToggle={() => {}} t={t}>
+          {zaloMode === "personal" && (
+            <div id="zalo-personal-setup" role="tabpanel" aria-label={t("Personal account")} className="space-y-3">
         {guide(t("Before using Zalo Personal QR login"), locale === "zh-CN" ? [
           <>这是基于 OpenClaw 内置 <code>zca-js</code> 的非官方个人账号自动化，不是 Zalo Bot Platform 官方 Bot API。</>,
           <>使用前请确认你接受账号受限或封禁风险；建议不要使用主工作账号。</>,
@@ -615,8 +658,12 @@ export default function ChannelSetupExtras({ canConfigure, activeChannel, onComp
           <button type="button" onClick={() => void savePersonal()} disabled={!personalRisk || personalRiskSaved} className={SECONDARY_BUTTON_CLASS}>{personalRiskSaved ? t("Saved; waiting for the gateway") : t("Save risk acknowledgement")}</button>
           <button type="button" onClick={() => { setPersonalNotice(null); void personalQr.start(); }} disabled={!personalRisk || !personalRiskSaved || personalQr.busy} className={BUTTON_CLASS}>{personalQr.busy ? t("Waiting for QR confirmation...") : t("Generate Zalo Personal QR")}</button>
         </div>
-        {personalNotice && <StatusMessage type={personalNotice.type} message={personalNotice.message} />}
-        <QrPanel session={personalQr.session} image={true} t={t} translateText={translateText} onCancel={() => void personalQr.cancel()} onRefresh={() => void personalQr.start()} refreshing={personalQr.starting} />
+         {personalNotice && <StatusMessage type={personalNotice.type} message={personalNotice.message} />}
+         <QrPanel session={personalQr.session} image={true} t={t} translateText={translateText} onCancel={() => void personalQr.cancel()} onRefresh={() => void personalQr.start()} refreshing={personalQr.starting} />
+              <p className="break-words text-xs text-[var(--text-muted)]">{statusText(personalConfig, t)}</p>
+            </div>
+          )}
+        </div>
       </ChannelSection>
 
       <ChannelSection id="signal" title="Signal" description={t("Signal uses the external signal-cli daemon. QR login links an existing Signal device")} done={signalStatus?.configured === true} open={activeChannel === "signal"} onToggle={() => {}} t={t}>
