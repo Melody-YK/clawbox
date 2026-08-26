@@ -47,6 +47,12 @@ describe("setup i18n", () => {
     );
     expect(translateRuntime("zh-CN", "A channel proxy URL is required.")).toBe("\u4f7f\u7528\u901a\u9053\u4ee3\u7406\u65f6\u5fc5\u987b\u586b\u5199\u4ee3\u7406\u5730\u5740\u3002");
     expect(translateRuntime("zh-CN", "Request failed (502)")).toBe("\u8bf7\u6c42\u5931\u8d25\uff08\u72b6\u6001\u7801 502\uff09\u3002");
+    expect(translateRuntime("zh-CN", "Login is starting. The page will check again shortly.")).toBe(
+      "登录正在启动，页面稍后会再次检查。",
+    );
+    expect(translateRuntime("zh-CN", "Login is still starting. The page will check again shortly.")).toBe(
+      "登录仍在启动，页面稍后会再次检查。",
+    );
     expect(translateRuntime("zh-CN", "Telegram is online as @clawbox_bot.")).toBe(
       "Telegram 已在线，机器人为 @clawbox_bot。",
     );

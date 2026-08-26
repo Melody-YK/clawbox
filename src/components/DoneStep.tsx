@@ -230,6 +230,10 @@ interface WechatConfigResponse {
 
 interface WechatQrResponse {
   pending?: boolean;
+  state?: "starting" | "ready" | "connected" | "expired" | "failed";
+  sessionId?: string;
+  expiresAt?: number;
+  connected?: boolean;
   message?: string;
   qrUrl?: string;
   error?: string;
@@ -2857,6 +2861,36 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     return false;
   };
 
+  const waitWechatQr = async (sessionId: string, maxMs = 150_000) => {
+    const started = Date.now();
+    let lastError = "WeChat QR code is still starting.";
+
+    while (Date.now() - started < maxMs) {
+      try {
+        const response = await fetch("/setup-api/wechat/qrcode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+          cache: "no-store",
+        });
+        const data = (await response.json().catch(() => ({}))) as WechatQrResponse;
+
+        if (data.qrUrl) return data;
+        if (!response.ok || data.state === "failed" || data.state === "expired") {
+          throw new Error(data.error || data.message || "Failed to generate WeChat QR code");
+        }
+        if (data.message) lastError = data.message;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        if (Date.now() - started >= maxMs - 1_000) throw new Error(lastError);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+
+    throw new Error(lastError);
+  };
+
   const requestWechatQrCode = async () => {
     if (!canConfigureWechat) {
       setWechatStatus({
@@ -2868,18 +2902,25 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
     setWechatQrLoading(true);
     setWechatStatus(null);
+    const refreshingExistingQr = Boolean(wechatQrUrl);
+    if (refreshingExistingQr) setWechatQrUrl(null);
     try {
       const res = await fetch("/setup-api/wechat/qrcode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh: refreshingExistingQr }),
+        cache: "no-store",
       });
-      const data = (await res.json().catch(() => ({}))) as WechatQrResponse;
+      let data = (await res.json().catch(() => ({}))) as WechatQrResponse;
       if (res.status === 202 && data?.pending) {
         setWechatStatus({
           type: "success",
-          message: data.message || "Login is starting. Click Refresh QR again shortly.",
+          message: data.message || "Login is starting. The page will check again shortly.",
         });
-        return;
+        if (!data.sessionId) {
+          throw new Error("WeChat QR login did not return a session id.");
+        }
+        data = await waitWechatQr(data.sessionId);
       }
       if (!res.ok || !data.qrUrl) {
         setWechatStatus({ type: "error", message: data.error || "Failed to refresh QR code" });
@@ -4876,16 +4917,14 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           )}
         </ChannelContentSection>
 
-        {/* Discord, Zalo, and Signal */}
-        {isAdditionalChatChannel(activeChatChannel) && (
-          <ChannelSetupExtras
-            canConfigure={providerDone}
-            activeChannel={activeChatChannel}
-            initialZaloMode={initialZaloMode}
-            statusRefreshToken={additionalStatusRefreshToken}
-            onStatusesChange={handleAdditionalStatuses}
-          />
-        )}
+        {/* Discord, Zalo, and Signal. Keep the status owner mounted so the summary stays live. */}
+        <ChannelSetupExtras
+          canConfigure={providerDone}
+          activeChannel={isAdditionalChatChannel(activeChatChannel) ? activeChatChannel : null}
+          initialZaloMode={initialZaloMode}
+          statusRefreshToken={additionalStatusRefreshToken}
+          onStatusesChange={handleAdditionalStatuses}
+        />
 
         {/* WeChat Bot */}
         <ChannelContentSection id="wechat" title={t("WeChat Bot")} active={activeChatChannel === "wechat"}>

@@ -101,6 +101,20 @@ describe("setup flow UI behavior", () => {
     expect(source).toContain("src={whatsappQrDataUrl}");
   });
 
+  it("uses an asynchronous, cache-free WeChat QR session flow", async () => {
+    const source = await fs.readFile(
+      path.join(process.cwd(), "src/components/DoneStep.tsx"),
+      "utf-8",
+    );
+
+    expect(source).toContain("const waitWechatQr = async (sessionId: string");
+    expect(source).toContain("body: JSON.stringify({ sessionId })");
+    expect(source).toContain("body: JSON.stringify({ refresh: refreshingExistingQr })");
+    expect(source).toContain('cache: "no-store"');
+    expect(source).toContain("data.sessionId");
+    expect(source).toContain("data.state === \"expired\"");
+  });
+
   it("keeps LINE in the setup wizard and requires a real inbound webhook", async () => {
     const source = await fs.readFile(
       path.join(process.cwd(), "src/components/DoneStep.tsx"),

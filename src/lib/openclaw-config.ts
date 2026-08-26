@@ -197,11 +197,12 @@ export async function getWechatConfig(): Promise<{
     {};
 
   const status = await readWeixinAccountStatus();
+  const enabled = typeof ch.enabled === "boolean" ? ch.enabled : undefined;
 
   return {
-    enabled: typeof ch.enabled === "boolean" ? ch.enabled : undefined,
+    enabled,
     botToken: typeof ch.botToken === "string" && ch.botToken ? "********" : undefined,
-    connected: status.connected,
+    connected: enabled !== false && status.connected,
     accountIds: status.accountIds,
   };
 }

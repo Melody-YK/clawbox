@@ -21,7 +21,7 @@ type Translate = (key: MessageKey) => string;
 
 interface ChannelSetupExtrasProps {
   canConfigure: boolean;
-  activeChannel: AdditionalChannelId;
+  activeChannel: AdditionalChannelId | null;
   initialZaloMode?: ZaloMode;
   statusRefreshToken?: number;
   onStatusesChange?: (statuses: Partial<Record<AdditionalChannelId, AdditionalChannelStatus>>) => void;

@@ -15,6 +15,7 @@ let zalouser: typeof import("@/lib/channels/zalouser");
 let clawbot: typeof import("@/lib/channels/zalo-clawbot");
 let runtime: typeof import("@/lib/channels/openclaw-runtime");
 let qr: typeof import("@/lib/channels/qr-session");
+let openclawConfig: typeof import("@/lib/openclaw-config");
 
 beforeAll(async () => {
   process.env.OPENCLAW_HOME = OPENCLAW_HOME;
@@ -22,7 +23,7 @@ beforeAll(async () => {
   process.env.CLAWBOX_ROOT = TEST_ROOT;
   await fs.mkdir(OPENCLAW_HOME, { recursive: true });
   vi.resetModules();
-  [discord, zalo, signal, zalouser, clawbot, runtime, qr] = await Promise.all([
+  [discord, zalo, signal, zalouser, clawbot, runtime, qr, openclawConfig] = await Promise.all([
     import("@/lib/channels/discord"),
     import("@/lib/channels/zalo"),
     import("@/lib/channels/signal"),
@@ -30,6 +31,7 @@ beforeAll(async () => {
     import("@/lib/channels/zalo-clawbot"),
     import("@/lib/channels/openclaw-runtime"),
     import("@/lib/channels/qr-session"),
+    import("@/lib/openclaw-config"),
   ]);
 });
 
@@ -138,6 +140,52 @@ describe("QR-backed Zalo channels", () => {
       configured: false,
       connected: false,
       running: false,
+    });
+  });
+
+  it("reports a successfully logged-in Zalo ClawBot account in the connected state", async () => {
+    const stateDir = path.join(OPENCLAW_HOME, "openclaw-zaloclawbot");
+    await fs.mkdir(path.join(stateDir, "accounts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "accounts.json"), JSON.stringify(["clawbot-test"]), "utf8");
+    await fs.writeFile(
+      path.join(stateDir, "accounts", "clawbot-test.json"),
+      JSON.stringify({ botToken: "zalo-clawbot-secret" }),
+      "utf8",
+    );
+    await fs.writeFile(
+      CONFIG_PATH,
+      JSON.stringify({ channels: { "openclaw-zaloclawbot": { enabled: true } } }),
+      "utf8",
+    );
+
+    await expect(clawbot.getClawBotStatus()).resolves.toMatchObject({
+      state: "connected",
+      configured: true,
+      enabled: true,
+      connected: true,
+      running: true,
+      accountIds: ["clawbot-test"],
+    });
+  });
+
+  it("does not report a saved WeChat account as connected when the channel is disabled", async () => {
+    const accountsDir = path.join(OPENCLAW_HOME, "openclaw-weixin", "accounts");
+    await fs.mkdir(accountsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(accountsDir, "ilink_bot.json"),
+      JSON.stringify({ token: "wechat-account-token" }),
+      "utf8",
+    );
+    await fs.writeFile(
+      CONFIG_PATH,
+      JSON.stringify({ channels: { "openclaw-weixin": { enabled: false } } }),
+      "utf8",
+    );
+
+    await expect(openclawConfig.getWechatConfig()).resolves.toMatchObject({
+      enabled: false,
+      connected: false,
+      accountIds: ["ilink_bot"],
     });
   });
 

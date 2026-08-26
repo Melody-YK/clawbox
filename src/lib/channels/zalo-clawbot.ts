@@ -281,12 +281,12 @@ export async function getClawBotStatus(
 
   // The plugin exposes account registration but no reliable probe payload.
   // A full channels.status call also waits on unrelated channel proxies, so
-  // keep this page responsive and report the locally registered state.
+  // use the successful QR login registration as this channel's live evidence.
   return {
     ...base,
-    state: "configured",
-    connected: false,
-    running: false,
+    state: "connected",
+    connected: true,
+    running: true,
     lastError: null,
   };
 }

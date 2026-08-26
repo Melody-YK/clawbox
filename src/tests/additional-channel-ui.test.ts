@@ -47,7 +47,8 @@ describe("additional channel and connection summary UI", () => {
     expect(doneSource).toContain("translateText(channel.description)");
     expect(doneSource).toContain("translateText(channel.label)");
     expect(doneSource).toContain('document.getElementById("section-channels")');
-    expect(extrasSource).toContain("activeChannel: AdditionalChannelId");
+    expect(extrasSource).toContain("activeChannel: AdditionalChannelId | null");
+    expect(doneSource).toContain("activeChannel={isAdditionalChatChannel(activeChatChannel) ? activeChatChannel : null}");
     expect(extrasSource).toContain('open={activeChannel === "signal"}');
   });
 
