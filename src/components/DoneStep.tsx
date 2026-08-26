@@ -135,6 +135,23 @@ interface QQBotStatusResponse extends QQBotConfigResponse {
   lastError: string | null;
 }
 
+interface WeComConfigResponse {
+  configured: boolean;
+  enabled: boolean;
+  hasSecret: boolean;
+  botId: string | null;
+  connectionMode: "websocket";
+  lastError?: string | null;
+}
+
+interface WeComStatusResponse extends WeComConfigResponse {
+  state: "not_configured" | "disabled" | "configured" | "connected" | "error";
+  connected: boolean;
+  running: boolean;
+  probeOk: boolean | null;
+  lastError: string | null;
+}
+
 type WhatsAppChannelState =
   | "not_configured"
   | "disabled"
@@ -300,7 +317,7 @@ const AI_PROVIDERS = [
   { id: "deepseek", name: "DeepSeek", hasSubscription: false, placeholder: "sk-...", hint: "Get your API key from platform.deepseek.com", tokenUrl: "https://platform.deepseek.com/api_keys" },
 ] as const;
 
-type ChatChannelId = "telegram" | "feishu" | "qqbot" | "whatsapp" | "line" | "wechat" | AdditionalChannelId;
+type ChatChannelId = "telegram" | "feishu" | "qqbot" | "whatsapp" | "line" | "wecom" | "wechat" | AdditionalChannelId;
 
 const CHAT_CHANNELS: readonly { id: ChatChannelId; label: string }[] = [
   { id: "telegram", label: "Telegram" },
@@ -309,6 +326,7 @@ const CHAT_CHANNELS: readonly { id: ChatChannelId; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp" },
   { id: "line", label: "LINE" },
   { id: "wechat", label: "WeChat Bot" },
+  { id: "wecom", label: "WeCom" },
   { id: "discord", label: "Discord" },
   { id: "zalo", label: "Zalo Bot" },
   { id: "zalo-clawbot", label: "Zalo ClawBot" },
@@ -318,6 +336,7 @@ const CHAT_CHANNELS: readonly { id: ChatChannelId; label: string }[] = [
 
 const CHAT_CHANNEL_META: readonly { id: ChatChannelId; tag: string; name: string; description: string }[] = [
   { id: "wechat", tag: "WX", name: "WeChat Bot", description: "Sign in to a Tencent iLink bot with a QR code; direct messages only." },
+  { id: "wecom", tag: "WC", name: "WeCom", description: "Connect an Enterprise WeChat smart bot over WebSocket with Bot ID and Secret." },
   { id: "telegram", tag: "TG", name: "Telegram", description: "Create a bot with BotFather, then paste its complete Bot Token." },
   { id: "whatsapp", tag: "WA", name: "WhatsApp", description: "Link a WhatsApp account by scanning a QR code. No Bot Token is needed." },
   { id: "feishu", tag: "FS", name: "Feishu / Lark", description: "Create or connect a Feishu / Lark bot through its official authorization flow." },
@@ -995,6 +1014,17 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const [qqbotStatus, setQQBotStatus] = useState<SectionStatusMessage | null>(null);
   const [qqbotDone, setQQBotDone] = useState(false);
 
+  /* ── WeCom ── */
+  const [wecomBotId, setWeComBotId] = useState("");
+  const [wecomSecret, setWeComSecret] = useState("");
+  const [showWeComSecret, setShowWeComSecret] = useState(false);
+  const [wecomEnabled, setWeComEnabled] = useState(true);
+  const [wecomConfigured, setWeComConfigured] = useState(false);
+  const [wecomSaving, setWeComSaving] = useState(false);
+  const [wecomChecking, setWeComChecking] = useState(false);
+  const [wecomStatus, setWeComStatus] = useState<SectionStatusMessage | null>(null);
+  const [wecomDone, setWeComDone] = useState(false);
+
   /* ── WhatsApp ── */
   const [whatsappMode, setWhatsAppMode] = useState<"dedicated" | "personal">("dedicated");
   const [whatsappOwnerNumber, setWhatsAppOwnerNumber] = useState("");
@@ -1062,6 +1092,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   const canConfigureTelegram = providerDone;
   const canConfigureFeishu = providerDone;
   const canConfigureQQBot = providerDone;
+  const canConfigureWeCom = providerDone;
   const canConfigureWhatsApp = providerDone;
   const canConfigureLine = providerDone;
   const canConfigureWechat = providerDone;
@@ -1322,6 +1353,61 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           : data.state === "disabled"
             ? "QQ Bot is disabled."
             : "QQ Bot is not configured yet.",
+      });
+    }
+    return data;
+  }, []);
+
+  const refreshWeComConfig = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch("/setup-api/channels/wecom", {
+      signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const data = (await response.json().catch(() => null)) as WeComConfigResponse | null;
+    if (!data) return null;
+
+    setWeComConfigured(data.configured === true);
+    setWeComEnabled(data.configured ? data.enabled === true : true);
+    if (data.botId) setWeComBotId(data.botId);
+    if (data.lastError) setWeComStatus({ type: "error", message: data.lastError });
+    return data;
+  }, []);
+
+  const refreshWeComStatus = useCallback(async (
+    options: { signal?: AbortSignal; announce?: boolean; force?: boolean } = {},
+  ) => {
+    const response = await fetch(`/setup-api/channels/wecom/status${options.force ? "?force=1" : ""}`, {
+      signal: options.signal,
+      cache: "no-store",
+    });
+    const data = (await response.json().catch(() => null)) as WeComStatusResponse | null;
+    if (!data || typeof data.state !== "string") {
+      setWeComDone(false);
+      if (options.announce) {
+        setWeComStatus({ type: "error", message: "WeCom returned an invalid status response." });
+      }
+      return null;
+    }
+
+    setWeComConfigured(data.configured === true);
+    setWeComEnabled(data.configured ? data.enabled === true : true);
+    if (data.botId) setWeComBotId(data.botId);
+    setWeComDone(data.connected === true);
+
+    if (!response.ok || data.state === "error") {
+      setWeComStatus({
+        type: "error",
+        message: data.lastError || "WeCom is configured but not online.",
+      });
+    } else if (options.announce || data.connected) {
+      setWeComStatus({
+        type: "success",
+        message: data.connected
+          ? "WeCom is online. Send a private message to the bot to test the AI reply."
+          : data.state === "disabled"
+            ? "WeCom is disabled."
+            : "WeCom is not configured yet.",
       });
     }
     return data;
@@ -1688,6 +1774,13 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   useEffect(() => {
     const controller = new AbortController();
+    refreshWeComConfig(controller.signal).catch(() => {});
+    refreshWeComStatus({ signal: controller.signal }).catch(() => {});
+    return () => controller.abort();
+  }, [refreshWeComConfig, refreshWeComStatus]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     refreshWhatsAppConfig(controller.signal).catch(() => {});
     refreshWhatsAppStatus({ signal: controller.signal }).catch(() => {});
     return () => controller.abort();
@@ -1707,10 +1800,11 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       refreshTelegramStatus({ force: true }),
       refreshFeishuStatus({ force: true }),
       refreshQQBotStatus({ force: true }),
+      refreshWeComStatus({ force: true }),
       refreshWhatsAppStatus({ force: true }),
       refreshLineStatus({ force: true }),
     ]);
-  }, [refreshFeishuStatus, refreshLineStatus, refreshQQBotStatus, refreshTelegramStatus, refreshWechatState, refreshWhatsAppStatus]);
+  }, [refreshFeishuStatus, refreshLineStatus, refreshQQBotStatus, refreshTelegramStatus, refreshWeComStatus, refreshWechatState, refreshWhatsAppStatus]);
 
   useEffect(() => () => whatsappWaitControllerRef.current?.abort(), []);
 
@@ -2328,6 +2422,82 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       });
     } finally {
       setQQBotChecking(false);
+    }
+  };
+
+  const saveWeCom = async () => {
+    if (!canConfigureWeCom) {
+      setWeComStatus({
+        type: "error",
+        message: "Configure your AI provider before setting up WeCom.",
+      });
+      return;
+    }
+
+    setWeComSaving(true);
+    setWeComStatus(null);
+    try {
+      const response = await fetch("/setup-api/channels/wecom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botId: wecomBotId.trim() || undefined,
+          secret: wecomSecret.trim() || undefined,
+          enabled: wecomEnabled,
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        saved?: boolean;
+        configured?: boolean;
+        enabled?: boolean;
+        connected?: boolean;
+        botId?: string | null;
+      };
+
+      if (!response.ok) {
+        if (data.saved || data.configured) setWeComConfigured(true);
+        setWeComDone(false);
+        setWeComStatus({
+          type: "error",
+          message: data.error || "Failed to save WeCom settings.",
+        });
+        return;
+      }
+
+      setWeComConfigured(data.configured === true);
+      setWeComEnabled(data.enabled === true);
+      setWeComDone(data.connected === true);
+      if (data.botId) setWeComBotId(data.botId);
+      setWeComSecret("");
+      setWeComStatus({
+        type: "success",
+        message: data.enabled === false
+          ? "WeCom is disabled. Your saved credentials are retained."
+          : "WeCom settings saved. Check status to confirm the WebSocket channel is online.",
+      });
+    } catch (error) {
+      setWeComStatus({
+        type: "error",
+        message: `Failed: ${error instanceof Error ? error.message : error}`,
+      });
+    } finally {
+      setWeComSaving(false);
+    }
+  };
+
+  const checkWeComStatus = async () => {
+    setWeComChecking(true);
+    try {
+      await refreshWeComStatus({ announce: true, force: true });
+    } catch (error) {
+      setWeComDone(false);
+      setWeComStatus({
+        type: "error",
+        message: `Status check failed: ${error instanceof Error ? error.message : error}`,
+      });
+    } finally {
+      setWeComChecking(false);
     }
   };
 
@@ -3431,6 +3601,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     if (id === "telegram") return { connected: telegramDone, configured: telegramConfigured, enabled: telegramEnabled };
     if (id === "feishu") return { connected: feishuDone, configured: feishuConfigured, enabled: feishuEnabled };
     if (id === "qqbot") return { connected: qqbotDone, configured: qqbotConfigured, enabled: qqbotEnabled };
+    if (id === "wecom") return { connected: wecomDone, configured: wecomConfigured, enabled: wecomEnabled };
     if (id === "whatsapp") return { connected: whatsappDone, configured: whatsappConfigured, enabled: whatsappEnabled, state: whatsappLinked ? "linked_offline" : undefined };
     if (id === "line") return { connected: lineDone, configured: lineConfigured, enabled: lineEnabled };
     return { connected: wechatDone, configured: wechatEnabled, enabled: wechatEnabled };
@@ -3441,7 +3612,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       const status = statusForChannel(channel.id);
       return status.connected === true || status.state === "connected";
     }).map((channel) => channel.id),
-    [additionalStatuses, feishuDone, feishuConfigured, feishuEnabled, lineDone, lineConfigured, lineEnabled, qqbotDone, qqbotConfigured, qqbotEnabled, telegramDone, telegramConfigured, telegramEnabled, wechatDone, wechatEnabled, whatsappDone, whatsappConfigured, whatsappEnabled, whatsappLinked],
+    [additionalStatuses, feishuDone, feishuConfigured, feishuEnabled, lineDone, lineConfigured, lineEnabled, qqbotDone, qqbotConfigured, qqbotEnabled, telegramDone, telegramConfigured, telegramEnabled, wecomDone, wecomConfigured, wecomEnabled, wechatDone, wechatEnabled, whatsappDone, whatsappConfigured, whatsappEnabled, whatsappLinked],
   );
   const activeChatChannelMeta = CHAT_CHANNEL_META.find((channel) => channel.id === activeChatChannel) ?? CHAT_CHANNEL_META[0];
 
@@ -5025,6 +5196,110 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
           </p>
           {wechatStatus && <StatusMessage type={wechatStatus.type} message={wechatStatus.message} />}
           <button type="button" onClick={saveWechat} disabled={wechatSaving || !canConfigureWechat} className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}>{wechatSaving && ButtonSpinner}{wechatSaving ? t("Saving...") : t("Save")}</button>
+        </ChannelContentSection>
+
+        {/* WeCom */}
+        <ChannelContentSection id="wecom" title={t("WeCom")} active={activeChatChannel === "wecom"}>
+          {!canConfigureWeCom ? (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300">
+              {t("Configure your AI provider first. WeCom setup unlocks after AI credentials are saved.")}
+            </div>
+          ) : (
+            <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+              {t("Connect an Enterprise WeChat smart bot over WebSocket with Bot ID and Secret.")}
+            </p>
+          )}
+
+          <CredentialGuide
+            title={t("How to configure a WeCom bot")}
+            steps={locale === "zh-CN" ? [
+              <>{t("WeCom step 1")} <code>openclaw plugins install @wecom/wecom-openclaw-plugin</code>。</>,
+              <>{t("WeCom step 2")} <a href="https://open.work.weixin.qq.com/help?doc_id=21657" target="_blank" rel="noreferrer">{t("WeCom AI Bot documentation")}</a>。</>,
+              <>{t("WeCom step 3")}</>,
+              <>{t("WeCom step 4")}</>,
+            ] : [
+              <>Install the official WeCom OpenClaw plugin on the device running OpenClaw: <code>openclaw plugins install @wecom/wecom-openclaw-plugin</code>.</>,
+              <>Create a WeCom smart bot by following the <a href="https://open.work.weixin.qq.com/help?doc_id=21657" target="_blank" rel="noreferrer">WeCom AI Bot documentation</a>.</>,
+              <>Copy the Bot ID and Secret from the bot settings, then enter them below.</>,
+              <>Save to reload the gateway in WebSocket mode, then use Check status to confirm that the plugin is connected.</>,
+            ]}
+            securityNote={locale === "zh-CN"
+              ? t("Never commit WeCom Bot ID or Secret to GitHub or include them in screenshots or chat messages.")
+              : "Never commit the WeCom Bot ID or Secret to GitHub or include them in screenshots or chat messages."}
+          />
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--text-secondary)]">{t("Enable WeCom")}</span>
+            <label className={`relative inline-flex items-center ${canConfigureWeCom ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+              <input
+                type="checkbox"
+                checked={wecomEnabled}
+                onChange={(event) => setWeComEnabled(event.target.checked)}
+                disabled={!canConfigureWeCom}
+                aria-label={t("Enable WeCom")}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[var(--bg-deep)] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--coral-bright)] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--coral-bright)]" />
+            </label>
+          </div>
+
+          <div>
+            <label htmlFor="wecom-bot-id" className={LABEL_CLASS}>{t("WeCom Bot ID")}</label>
+            <input
+              id="wecom-bot-id"
+              value={wecomBotId}
+              onChange={(event) => setWeComBotId(event.target.value)}
+              placeholder={t("WeCom Bot ID")}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={!canConfigureWeCom}
+              className={INPUT_CLASS}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="wecom-secret" className={LABEL_CLASS}>{t("WeCom Secret")}</label>
+            <PasswordInput
+              id="wecom-secret"
+              value={wecomSecret}
+              onChange={setWeComSecret}
+              visible={showWeComSecret}
+              onToggle={() => setShowWeComSecret((visible) => !visible)}
+              placeholder={wecomConfigured ? t("Secret already saved; leave blank to keep it") : t("WeCom Secret")}
+              autoComplete="off"
+              disabled={!canConfigureWeCom}
+            />
+          </div>
+
+          {wecomStatus && <StatusMessage type={wecomStatus.type} message={wecomStatus.message} />}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={saveWeCom}
+              disabled={wecomSaving || !canConfigureWeCom}
+              className={`${SAVE_BUTTON_CLASS} flex items-center gap-2`}
+            >
+              {wecomSaving && ButtonSpinner}
+              {wecomSaving ? t("Saving...") : t("Save & Connect")}
+            </button>
+            <button
+              type="button"
+              onClick={checkWeComStatus}
+              disabled={wecomChecking || !wecomConfigured}
+              className="px-4 py-2.5 rounded-lg border border-gray-600 text-sm font-semibold text-[var(--text-secondary)] hover:border-[var(--coral-bright)] hover:text-[var(--text-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {wecomChecking ? t("Checking...") : t("Check status")}
+            </button>
+          </div>
+
+          {wecomDone && (
+            <div className="border-t border-gray-700 pt-3">
+              <p className="text-xs font-semibold text-[var(--text-secondary)]">{t("Test the first private message")}</p>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                {t("Use the WeCom smart bot to send a private message. It should reply through the configured AI provider; no separate ClawBox pairing approval is required.")}
+              </p>
+            </div>
+          )}
         </ChannelContentSection>
 
         </CollapsibleSection>

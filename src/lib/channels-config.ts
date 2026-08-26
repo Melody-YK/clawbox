@@ -6,6 +6,7 @@ export const MANAGED_CHANNELS = [
   "telegram",
   "whatsapp",
   "line",
+  "wecom",
 ] as const;
 export type ManagedChannel = (typeof MANAGED_CHANNELS)[number];
 
@@ -15,6 +16,7 @@ const CHANNEL_CONFIG_KEY: Record<ManagedChannel, string> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
   line: "line",
+  wecom: "wecom",
 };
 
 const FIELD_WHITELIST: Record<ManagedChannel, readonly string[]> = {
@@ -23,6 +25,7 @@ const FIELD_WHITELIST: Record<ManagedChannel, readonly string[]> = {
   telegram: ["enabled", "botToken"],
   whatsapp: ["enabled"],
   line: ["enabled", "channelAccessToken", "channelSecret"],
+  wecom: ["enabled", "botId", "secret", "connectionMode"],
 };
 
 const SECRET_FIELDS: Record<ManagedChannel, readonly string[]> = {
@@ -31,6 +34,7 @@ const SECRET_FIELDS: Record<ManagedChannel, readonly string[]> = {
   telegram: ["botToken"],
   whatsapp: [],
   line: ["channelAccessToken", "channelSecret"],
+  wecom: ["secret"],
 };
 
 type ChannelRecord = Record<string, unknown>;
@@ -89,6 +93,9 @@ export async function setChannelConfig(
     }
 
     if (channel === "feishu" && next.connectionMode === "app") {
+      next.connectionMode = "websocket";
+    }
+    if (channel === "wecom") {
       next.connectionMode = "websocket";
     }
     channels[configKey] = next;
