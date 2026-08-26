@@ -747,6 +747,78 @@ function UpdateProgressHeading({ phase }: { phase: UpdateState["phase"] | undefi
   return <>{t("System Update")}</>;
 }
 
+type UpdateApiState = "updating" | "done" | "failed";
+
+interface UpdateApiResponse {
+  state?: UpdateApiState;
+  phase?: UpdateState["phase"];
+  stage?: string | number;
+  status?: string;
+  message?: string;
+  error?: string;
+  progress?: number;
+  steps?: unknown;
+  currentStepIndex?: unknown;
+}
+
+function normalizeUpdateStatus(payload: unknown): UpdateState | null {
+  if (!isRecordValue(payload)) return null;
+  const data = payload as UpdateApiResponse;
+
+  const phase: UpdateState["phase"] | null =
+    data.state === "done"
+      ? "completed"
+      : data.state === "updating"
+        ? "running"
+        : data.state === "failed"
+          ? "failed"
+          : data.phase === "idle" || data.phase === "running" || data.phase === "completed" || data.phase === "failed"
+            ? data.phase
+            : null;
+  if (!phase) return null;
+
+  const validStepStatuses: readonly StepStatus[] = ["pending", "running", "completed", "failed"];
+  const steps = Array.isArray(data.steps)
+    ? data.steps.filter((step): step is UpdateState["steps"][number] => (
+      isRecordValue(step) &&
+      typeof step.id === "string" &&
+      typeof step.label === "string" &&
+      typeof step.status === "string" &&
+      validStepStatuses.includes(step.status as StepStatus)
+    ))
+    : [];
+  const currentStepIndex = typeof data.currentStepIndex === "number" && Number.isInteger(data.currentStepIndex)
+    ? data.currentStepIndex
+    : -1;
+  const stageText = typeof data.stage === "string" && data.stage.trim() ? data.stage : undefined;
+  const status = typeof data.status === "string" && data.status.trim()
+    ? data.status
+    : stageText;
+  const progress = typeof data.progress === "number" && Number.isFinite(data.progress)
+    ? Math.min(100, Math.max(0, data.progress))
+    : typeof data.stage === "number" && Number.isFinite(data.stage)
+      ? Math.min(100, Math.max(0, data.stage))
+      : typeof data.stage === "string" && /^\d+(?:\.\d+)?$/.test(data.stage.trim())
+        ? Math.min(100, Math.max(0, Number(data.stage)))
+      : phase === "completed"
+        ? 100
+        : undefined;
+  const error = typeof data.error === "string" && data.error.trim()
+    ? data.error
+    : phase === "failed" && typeof data.message === "string" && data.message.trim()
+      ? data.message
+      : undefined;
+
+  return {
+    phase,
+    steps,
+    currentStepIndex,
+    ...(progress === undefined ? {} : { progress }),
+    ...(status ? { status } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
 /* ── Main component ── */
 
 export default function DoneStep({ setupComplete = false }: DoneStepProps) {
@@ -764,9 +836,12 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
   /* ── System update ── */
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [updateStarted, setUpdateStarted] = useState(false);
+  const [updateAcknowledged, setUpdateAcknowledged] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateServerRestarting, setUpdateServerRestarting] = useState(false);
   const updatePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const updatePollControllerRef = useRef<AbortController | null>(null);
+  const updateReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const oauthWindowRef = useRef<Window | null>(null);
   const aiSaveControllerRef = useRef<AbortController | null>(null);
   const aiExchangeControllerRef = useRef<AbortController | null>(null);
@@ -1020,7 +1095,8 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     },
   };
   const currentAiOAuth = aiOauthLabels[aiProvider] ?? aiOauthLabels.anthropic;
-  const isUpdateRunning = updateStarted && updateState?.phase === "running";
+  const isUpdateRunning = updateStarted && updateState?.phase !== "completed" && updateState?.phase !== "failed";
+  const updateFailureMessage = updateError || updateState?.error || null;
 
   /* ── Fetch section status on mount ── */
   useEffect(() => {
@@ -1717,35 +1793,68 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
     updatePollControllerRef.current = controller;
     let failureCount = 0;
     let serverWentDown = false;
-    updatePollRef.current = setInterval(async () => {
+    let requestInFlight = false;
+
+    const poll = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
       try {
         const res = await fetch("/setup-api/update/status", {
           signal: controller.signal,
+          cache: "no-store",
         });
         if (controller.signal.aborted) return;
         if (!res.ok) {
           failureCount++;
-          if (failureCount >= 3) serverWentDown = true;
+          if (failureCount >= 3) {
+            serverWentDown = true;
+            setUpdateServerRestarting(true);
+          }
           return;
         }
-        if (serverWentDown) {
-          window.location.reload();
-          return;
-        }
+        if (serverWentDown) setUpdateServerRestarting(false);
         failureCount = 0;
-        const data: UpdateState = await res.json();
+        const data = normalizeUpdateStatus(await res.json());
+        if (!data) {
+          stopUpdatePolling();
+          setUpdateError("Update status response was invalid.");
+          return;
+        }
         if (controller.signal.aborted) return;
         setUpdateState(data);
-        if (data.phase !== "running") stopUpdatePolling();
+        if (data.phase === "completed") {
+          stopUpdatePolling();
+          if (!updateReloadTimerRef.current) {
+            updateReloadTimerRef.current = setTimeout(() => {
+              window.location.reload();
+            }, 800);
+          }
+        } else if (data.phase === "failed") {
+          stopUpdatePolling();
+        }
       } catch {
         if (controller.signal.aborted) return;
         failureCount++;
-        if (failureCount >= 3) serverWentDown = true;
+        if (failureCount >= 3) {
+          serverWentDown = true;
+          setUpdateServerRestarting(true);
+        }
+      } finally {
+        requestInFlight = false;
       }
-    }, 2000);
+    };
+
+    updatePollRef.current = setInterval(() => void poll(), 2000);
+    void poll();
   }, [stopUpdatePolling]);
 
-  useEffect(() => () => stopUpdatePolling(), [stopUpdatePolling]);
+  useEffect(() => () => {
+    stopUpdatePolling();
+    if (updateReloadTimerRef.current) {
+      clearTimeout(updateReloadTimerRef.current);
+      updateReloadTimerRef.current = null;
+    }
+  }, [stopUpdatePolling]);
 
   /* ── Actions ── */
 
@@ -1797,7 +1906,9 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
 
   const triggerUpdate = async (branch?: string) => {
     setUpdateStarted(true);
+    setUpdateAcknowledged(false);
     setUpdateError(null);
+    setUpdateServerRestarting(false);
     setUpdateState(null);
     try {
       if (branch) {
@@ -1814,13 +1925,18 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       const res = await fetch("/setup-api/update/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true }),
+        body: "{}",
       });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        setUpdateError("An update is already in progress.");
+        return;
+      }
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         setUpdateError(typeof data.error === "string" ? data.error : "Failed to start update");
         return;
       }
+      setUpdateAcknowledged(true);
       startUpdatePolling();
     } catch (err) {
       setUpdateError(err instanceof Error ? err.message : "Failed to start update");
@@ -3527,24 +3643,31 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
       )}
 
       {/* Update progress overlay */}
-      {updateStarted && updateState && (
+      {updateStarted && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="card-surface rounded-2xl p-6 max-w-md w-full shadow-2xl">
             <h3 className="text-lg font-bold text-gray-100 mb-2">
-              <UpdateProgressHeading phase={updateState.phase} />
+              <UpdateProgressHeading phase={updateState?.phase} />
             </h3>
-            {updateError && (
-              <p className="text-sm text-red-400 mb-4">{translateText(updateError)}</p>
-            )}
-            {updateState.progress !== undefined && (
+            {updateFailureMessage ? (
+              <p className="text-sm text-red-400 mb-4">{translateText(updateFailureMessage)}</p>
+            ) : updateServerRestarting ? (
+              <p className="text-sm text-[var(--text-secondary)] mb-4">{t("The update service is restarting. Waiting for it to come back online...")}</p>
+            ) : !updateState && updateAcknowledged ? (
+              <p className="text-sm text-[var(--text-secondary)] mb-4">{t("Update request received. Waiting for the update service...")}</p>
+            ) : null}
+            {(updateState?.progress !== undefined || updateState?.status) && (
               <div className="mb-4">
                 <div className="w-full h-2 rounded-full bg-[var(--bg-deep)] overflow-hidden mb-2">
-                  <div className="h-full bg-[var(--coral-bright)] rounded-full transition-all" style={{ width: `${updateState.progress}%` }} />
+                  <div
+                    className={`h-full bg-[var(--coral-bright)] rounded-full transition-all ${updateState.progress === undefined ? "w-1/3 animate-pulse" : ""}`}
+                    style={updateState.progress === undefined ? undefined : { width: `${updateState.progress}%` }}
+                  />
                 </div>
                 <p className="text-xs text-[var(--text-secondary)]">{translateText(updateState.status || "Updating...")}</p>
               </div>
             )}
-            {updateState.steps && (
+            {updateState?.steps && updateState.steps.length > 0 && (
               <div className="space-y-2 mb-4">
                 {updateState.steps.map((step, idx) => (
                   <div key={idx} className="flex items-center gap-2 text-xs">
@@ -3554,7 +3677,7 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 ))}
               </div>
             )}
-            {updateState.phase === "completed" && (
+            {updateState?.phase === "completed" && (
               <button
                 type="button"
                 onClick={() => { window.location.reload(); }}
@@ -3563,10 +3686,21 @@ export default function DoneStep({ setupComplete = false }: DoneStepProps) {
                 {t("Refresh")}
               </button>
             )}
-            {updateState.phase === "failed" && (
+            {(updateState?.phase === "failed" || updateError) && (
               <button
                 type="button"
-                onClick={() => { setUpdateStarted(false); setUpdateState(null); }}
+                onClick={() => {
+                  stopUpdatePolling();
+                  if (updateReloadTimerRef.current) {
+                    clearTimeout(updateReloadTimerRef.current);
+                    updateReloadTimerRef.current = null;
+                  }
+                  setUpdateStarted(false);
+                  setUpdateAcknowledged(false);
+                  setUpdateServerRestarting(false);
+                  setUpdateError(null);
+                  setUpdateState(null);
+                }}
                 className="w-full py-2.5 text-sm font-semibold text-white btn-gradient rounded-lg cursor-pointer"
               >
                 {t("Close")}
